@@ -1,0 +1,10 @@
+config.env
+.env
+output/
+data/
+data/emails_manuais.txt
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
