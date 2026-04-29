@@ -441,33 +441,26 @@ def _try_get_page_description(url: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _is_junior_job(title: str) -> bool:
-    """Filtra títulos garantindo que sejam de nível júnior, estagiário ou iniciante."""
+    """Filtra títulos, bloqueando apenas vagas de alto nível executivo/gestão.
+    A decisão final de compatibilidade é feita pela IA (Gemini) ao comparar
+    os requisitos da vaga com o currículo base.
+    """
     t = title.lower()
-    
-    # Palavras-chave negativas (níveis altos ou não relacionados)
-    negative_keywords = [
-        "senior", "sênior", "sr", "pleno", "pl", "mid-level", "mid", "lead", "lider", "líder",
-        "manager", "gerente", "diretor", "especialista", "specialist", "principal", "staff", "head",
-        "coord", "coordenador", "jefe", "director", "semi-senior", "sssr"
+
+    # Bloquear apenas cargos executivos/gestão que estejam muito acima do perfil
+    hard_block = [
+        "manager", "gerente", "diretor", "director", "head of",
+        "vp ", "vice president", "cto", "cio", "ceo", "coo",
+        "lider", "líder", "lead", "staff engineer", "principal engineer",
+        "coordenador", "coord", "jefe", "scrum master",
     ]
-    
-    for word in negative_keywords:
-        if re.search(r'\b' + word + r'\b', t):
+
+    for word in hard_block:
+        if word in t:
             return False
-            
-    # Palavras-chave positivas (níveis de entrada)
-    positive_keywords = [
-        "junior", "júnior", "jr", "estagio", "estágio", "estagiario", "estagiário", "intern", 
-        "internship", "trainee", "iniciante", "entry", "entry-level", "suporte", "help desk",
-        "aprendiz", "assistente", "recém-formado", "grad", "soporte", "practicas", "practicante"
-    ]
-    
-    for word in positive_keywords:
-        if re.search(r'\b' + word + r'\b', t):
-            return True
-            
-    # Filtro estrito: se não tiver palavra positiva que denote iniciante, descarta a vaga.
-    return False
+
+    # Tudo o que não for cargo executivo passa — a IA decide compatibilidade
+    return True
 
 def _deduplicate_and_filter_jobs(jobs: list[dict]) -> list[dict]:
     """Remove vagas duplicadas e filtra para manter apenas nível iniciante/júnior."""

@@ -34,47 +34,79 @@ def _is_valid_email(email: str) -> bool:
 
 def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:
     """
-    Gera o corpo do e-mail usando template fixo para otimização de tempo e tokens.
+    Gera o corpo do e-mail usando template fixo no idioma da vaga.
+    Suporta: pt-BR, pt-PT, en, es
     Retorna dict com: assunto, corpo_texto, corpo_html
     """
     idioma = analysis.get("idioma_vaga", "pt-BR")
     skills_str = ", ".join(adapted_data.get("habilidades_tecnicas", [])[:5])
+    titulo = job.get('titulo', 'Position')
+    empresa = job.get('empresa', 'your company')
 
-    # Se a vaga for gringa, escreve o e-mail em inglês
     if idioma.startswith("en"):
-        assunto = f"Application – {job.get('titulo', 'Position')} – {CANDIDATE_NAME}"
+        assunto = f"Application \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
         corpo = (
             f"Dear Hiring Manager,\n\n"
             f"My name is {CANDIDATE_NAME} and I am writing to apply for the "
-            f"{job.get('titulo', '')} position at {job.get('empresa', 'your company')}.\n\n"
-            f"I have experience with {skills_str} and I am looking for new opportunities "
-            f"to contribute to your team.\n\n"
-            f"Please find my resume attached for your review.\n\n"
-            f"Thank you for your time and consideration. I look forward to hearing from you.\n\n"
+            f"{titulo} position at {empresa}.\n\n"
+            f"I have experience with {skills_str or 'software development and IT support'} "
+            f"and I am eager to contribute to your team.\n\n"
+            f"Please find my resum\u00e9 attached for your review.\n\n"
+            f"Thank you for your time and consideration. "
+            f"I look forward to the opportunity to discuss my qualifications further.\n\n"
             f"Best regards,\n{CANDIDATE_NAME}"
         )
-    else:
-        assunto = f"Candidatura – {job.get('titulo', 'Vaga')} – {CANDIDATE_NAME}"
+
+    elif idioma.startswith("es"):
+        assunto = f"Solicitud de Empleo \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+        corpo = (
+            f"Estimado/a equipo de Selecci\u00f3n,\n\n"
+            f"Mi nombre es {CANDIDATE_NAME} y me dirijo a ustedes para postularme "
+            f"al puesto de {titulo} en {empresa}.\n\n"
+            f"Cuento con experiencia en {skills_str or 'desarrollo de software y soporte t\u00e9cnico'} "
+            f"y tengo gran inter\u00e9s en formar parte de su equipo.\n\n"
+            f"Adjunto mi curr\u00edculum v\u00edtae para su consideraci\u00f3n.\n\n"
+            f"Agradezco su atenci\u00f3n y quedo a su disposici\u00f3n para cualquier consulta.\n\n"
+            f"Un cordial saludo,\n{CANDIDATE_NAME}"
+        )
+
+    elif idioma == "pt-PT":
+        assunto = f"Candidatura \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+        corpo = (
+            f"Exmos. Senhores,\n\n"
+            f"O meu nome \u00e9 {CANDIDATE_NAME} e venho por este meio candidatar-me "
+            f"\u00e0 vaga de {titulo} na {empresa}.\n\n"
+            f"Tenho experi\u00eancia em {skills_str or 'desenvolvimento de software e suporte de TI'} "
+            f"e estou motivado/a para contribuir com a vossa equipa.\n\n"
+            f"Junto em anexo o meu curr\u00edculo para aprecia\u00e7\u00e3o.\n\n"
+            f"Agrade\u00e7o a aten\u00e7\u00e3o dispensada e fico ao dispor para esclarecimentos.\n\n"
+            f"Com os melhores cumprimentos,\n{CANDIDATE_NAME}"
+        )
+
+    else:  # pt-BR (padr\u00e3o)
+        assunto = f"Candidatura \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
         corpo = (
             f"Prezados,\n\n"
-            f"Meu nome é {CANDIDATE_NAME} e gostaria de me candidatar à vaga de "
-            f"{job.get('titulo', '')} na {job.get('empresa', 'sua empresa')}.\n\n"
-            f"Tenho experiência com {skills_str} e estou em busca de novas oportunidades "
-            f"para contribuir com a equipe de vocês.\n\n"
-            f"Segue meu currículo em anexo para apreciação.\n\n"
-            f"Agradeço a atenção e fico à disposição para uma conversa.\n\n"
+            f"Meu nome \u00e9 {CANDIDATE_NAME} e gostaria de me candidatar \u00e0 vaga de "
+            f"{titulo} na {empresa}.\n\n"
+            f"Tenho experi\u00eancia com {skills_str or 'desenvolvimento de software e suporte de TI'} "
+            f"e estou em busca de novas oportunidades para contribuir com a equipe de voc\u00eas.\n\n"
+            f"Segue meu curr\u00edculo em anexo para aprecia\u00e7\u00e3o.\n\n"
+            f"Agrade\u00e7o a aten\u00e7\u00e3o e fico \u00e0 disposi\u00e7\u00e3o para uma conversa.\n\n"
             f"Atenciosamente,\n{CANDIDATE_NAME}"
         )
 
     return {
         "assunto": assunto,
         "corpo_texto": corpo,
-        "corpo_html": _text_to_html(corpo, job, CANDIDATE_NAME),
+        "corpo_html": _text_to_html(corpo, job, CANDIDATE_NAME, idioma),
     }
 
 
-def _text_to_html(text: str, job: dict, candidate_name: str) -> str:
+def _text_to_html(text: str, job: dict, candidate_name: str, idioma: str = "pt-BR") -> str:
     """Converte texto puro em HTML profissional para o email."""
+    lang_map = {"en": "en", "es": "es", "pt-PT": "pt-PT", "pt-BR": "pt-BR"}
+    lang = lang_map.get(idioma, "pt-BR")
     paragraphs = text.split("\n\n")
     html_paras = "".join(
         f"<p style='margin:0 0 12px 0;'>{p.replace(chr(10), '<br>')}</p>"
@@ -82,7 +114,7 @@ def _text_to_html(text: str, job: dict, candidate_name: str) -> str:
     )
 
     return f"""<!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="{lang}">
 <head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:0;background:#f4f6f9;font-family:Arial,sans-serif;">
   <table width="100%" cellpadding="0" cellspacing="0"
@@ -92,7 +124,7 @@ def _text_to_html(text: str, job: dict, candidate_name: str) -> str:
              style="background:#ffffff;border-radius:8px;
                     box-shadow:0 2px 8px rgba(0,0,0,0.08);overflow:hidden;">
 
-        <!-- Cabeçalho -->
+        <!-- Header -->
         <tr>
           <td style="background:linear-gradient(135deg,#29417a,#0077b5);
                      padding:28px 36px;text-align:center;">
@@ -100,25 +132,25 @@ def _text_to_html(text: str, job: dict, candidate_name: str) -> str:
               {candidate_name}
             </h1>
             <p style="margin:6px 0 0;color:#b0c8e8;font-size:13px;">
-              Candidatura para {job.get('titulo', 'Vaga')}
+              {job.get('titulo', '')}
             </p>
           </td>
         </tr>
 
-        <!-- Corpo -->
+        <!-- Body -->
         <tr>
           <td style="padding:32px 36px;color:#3d3d3d;font-size:14px;line-height:1.7;">
             {html_paras}
           </td>
         </tr>
 
-        <!-- Rodapé -->
+        <!-- Footer -->
         <tr>
           <td style="background:#f8f9fb;padding:16px 36px;
                      border-top:1px solid #e8eaed;text-align:center;">
             <p style="margin:0;color:#888;font-size:11px;">
-              📎 Currículo em anexo &nbsp;|&nbsp;
-              Vaga: <strong>{job.get('titulo', '')}</strong> — {job.get('empresa', '')}
+              &#128206; Resume attached &nbsp;|&nbsp;
+              Position: <strong>{job.get('titulo', '')}</strong> &mdash; {job.get('empresa', '')}
             </p>
           </td>
         </tr>
