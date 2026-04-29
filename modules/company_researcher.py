@@ -135,13 +135,15 @@ def find_company_email(company_name: str) -> dict:
     all_emails: list[str] = []
     website_url: str = ""
 
-    queries = [
+    # Queries prioritárias: foco em RH, vagas e recrutamento
+    hr_queries = [
         f'"{company_name}" email RH vagas recrutamento site:br',
         f'"{company_name}" contato recrutamento curriculo',
+        f'"{company_name}" careers jobs email contact',  # fallback internacional
     ]
 
-    # ── Tentar Google primeiro, depois DuckDuckGo ─────────────────
-    for query in queries:
+    # ── Etapa 1: Busca focada em RH/vagas ─────────────────────────
+    for query in hr_queries:
         _random_delay(1, 2)
         search_results = _search_google(query) or _search_duckduckgo(query)
 
@@ -167,13 +169,46 @@ def find_company_email(company_name: str) -> dict:
         if all_emails:
             break
 
-    # ── Tentar páginas /contato /carreiras do site ─────────────────
+    # ── Etapa 2: Tentar páginas /contato /carreiras do site ────────
     if website_url and not all_emails:
         _random_delay(1, 2)
         contact_pages = _find_contact_pages(website_url)
         for page_url in contact_pages:
             page_emails = _scrape_page_emails(page_url)
             all_emails.extend(page_emails)
+            if all_emails:
+                break
+
+    # ── Etapa 3: Fallback — busca qualquer email da empresa ────────
+    if not all_emails:
+        print(f"  🔄 Buscando qualquer email disponível para {company_name}...")
+        fallback_queries = [
+            f'"{company_name}" email contato',
+            f'"{company_name}" "@" site',
+        ]
+        for query in fallback_queries:
+            _random_delay(1, 2)
+            search_results = _search_google(query) or _search_duckduckgo(query)
+
+            for r in search_results[:8]:
+                # Verifica snippet e title por emails
+                combined_text = r.get("snippet", "") + " " + r.get("title", "")
+                snippet_emails = _extract_emails(combined_text)
+                all_emails.extend(snippet_emails)
+
+                # Visita a página se parecer do site da empresa
+                url = r.get("url", "")
+                company_slug = company_name.lower().replace(" ", "")[:8]
+                if company_slug in url.lower() and not website_url:
+                    website_url = f"{urlparse(url).scheme}://{urlparse(url).netloc}"
+                    result["website"] = website_url
+                    page_emails = _scrape_page_emails(url)
+                    all_emails.extend(page_emails)
+
+                    # Tenta também a homepage
+                    home_emails = _scrape_page_emails(website_url)
+                    all_emails.extend(home_emails)
+
             if all_emails:
                 break
 
