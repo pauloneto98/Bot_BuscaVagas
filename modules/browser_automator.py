@@ -30,6 +30,7 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
     is_complex = any(d in job_url.lower() for d in complex_domains)
 
     success = False
+    is_linkedin = "linkedin.com" in job_url.lower()
     
     try:
         with sync_playwright() as p:
@@ -50,14 +51,68 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
                 browser.close()
                 _trigger_whatsapp(job_url, curriculo_path, job_info)
                 return False
-                
-            if is_complex:
-                print("  ⚠ [Navegador] Site complexo detectado (requer login/conta). Acionando WhatsApp Fallback.")
-                browser.close()
-                _trigger_whatsapp(job_url, curriculo_path, job_info)
-                return False
 
-            # Tenta preencher (heurísticas básicas)
+            # Para LinkedIn: aguarda login antes de continuar
+            if is_linkedin:
+                print("  🔑 [LinkedIn] Aguardando sessão autenticada (faça login se solicitado)...")
+                try:
+                    # Aguarda o elemento do menu de perfil (indica que está logado)
+                    page.wait_for_selector(
+                        'img.global-nav__me-photo, [data-control-name="nav.settings_and_privacy"]',
+                        timeout=120000  # 2 min para o usuário fazer login
+                    )
+                    print("  ✅ [LinkedIn] Sessão autenticada!")
+                    time.sleep(2)
+                except Exception:
+                    print("  ⚠ [LinkedIn] Login não detectado em 2 minutos. Acionando WhatsApp.")
+                    browser.close()
+                    _trigger_whatsapp(job_url, curriculo_path, job_info)
+                    return False
+                    
+                # Tenta o Easy Apply do LinkedIn
+                try:
+                    # Aguarda o botão de Easy Apply ficar disponível
+                    easy_apply_btn = page.locator(
+                        'button.jobs-apply-button, button:has-text("Easy Apply"), button:has-text("Candidatura Simplificada")'
+                    ).first
+                    if easy_apply_btn.count() > 0:
+                        print("  🖥️ [LinkedIn] Clicando em Easy Apply...")
+                        easy_apply_btn.click()
+                        time.sleep(3)
+                        
+                        # Tenta submeter as telas do easy apply
+                        for step in range(5):  # Máximo 5 telas
+                            # Botão de próximo/enviar
+                            next_btn = page.locator(
+                                'button:has-text("Submit application"), button:has-text("Enviar candidatura"), '
+                                'button:has-text("Review"), button:has-text("Revisar"), '
+                                'button:has-text("Next"), button:has-text("Próximo")'
+                            ).first
+                            if next_btn.count() > 0:
+                                next_btn.click()
+                                time.sleep(2)
+                                # Verifica se a candidatura foi enviada
+                                if page.locator('h2:has-text("Your application was sent"), h2:has-text("Candidatura enviada")').count() > 0:
+                                    print("  ✅ [LinkedIn] Candidatura Easy Apply enviada com sucesso!")
+                                    success = True
+                                    break
+                            else:
+                                break  # Não achou botão de avançar, para
+                                
+                        if not success:
+                            print("  ⚠ [LinkedIn] Não conseguiu completar o Easy Apply. Acionando WhatsApp.")
+                    else:
+                        print("  ⚠ [LinkedIn] Botão Easy Apply não encontrado. Acionando WhatsApp.")
+                        
+                except Exception as e:
+                    print(f"  ⚠ [LinkedIn] Erro no Easy Apply: {e}")
+                    
+                browser.close()
+                if not success:
+                    _trigger_whatsapp(job_url, curriculo_path, job_info)
+                return success
+                    
+        
             # Isso é um "best-effort". Se não achar os campos, vai cair no except.
             try:
                 # Procura botões de 'Apply', 'Candidatar', 'Aplicar'

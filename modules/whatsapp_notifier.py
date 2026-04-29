@@ -36,12 +36,13 @@ def send_whatsapp_alert(phone_number: str, text: str, pdf_path: str = "") -> boo
             print(f"  📱 [WhatsApp] Abrindo conversa com {phone_number}...")
             page.goto(url)
             
-            # Aguarda a tela principal carregar
+            # Aguarda a tela principal carregar (até 3 minutos para escanear QR Code)
             try:
                 # O botão de 'anexar' (clip) aparece quando o chat está pronto
-                page.wait_for_selector('span[data-icon="attach-menu-plus"]', timeout=60000)
+                print("  ⏳ [WhatsApp] Aguardando carregamento (até 3 min para QR Code se necessário)...")
+                page.wait_for_selector('span[data-icon="attach-menu-plus"]', timeout=180000)
             except Exception:
-                print("  ⚠ [WhatsApp] Timeout. Pode ser necessário escanear o QR Code.")
+                print("  ⚠ [WhatsApp] Timeout de 3 minutos. Pode ser necessário escanear o QR Code.")
                 print("  ⏳ Feche a janela após escanear e tente novamente na próxima.")
                 browser.close()
                 return False
