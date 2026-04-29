@@ -454,8 +454,8 @@ def _is_junior_job(title: str) -> bool:
         if re.search(r'\b' + word + r'\b', t):
             return True
             
-    # Se não tiver palavra negativa, assumimos que pode ser entrada/genérico
-    return True
+    # Filtro estrito: se não tiver palavra positiva que denote iniciante, descarta a vaga.
+    return False
 
 def _deduplicate_and_filter_jobs(jobs: list[dict]) -> list[dict]:
     """Remove vagas duplicadas e filtra para manter apenas nível iniciante/júnior."""
