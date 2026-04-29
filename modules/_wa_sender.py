@@ -34,29 +34,29 @@ def main():
         encoded_msg = urllib.parse.quote(args.text)
         url = f"https://web.whatsapp.com/send?phone={args.phone}&text={encoded_msg}"
 
-        print(f"  📱 [WhatsApp] Abrindo conversa com {args.phone}...")
+        print(f"  [WhatsApp] Abrindo conversa com {args.phone}...")
         page.goto(url)
 
         # Aguarda até 3 minutos (QR Code ou já logado)
-        print("  ⏳ [WhatsApp] Aguardando carregamento (até 3 min — escaneie o QR Code se pedido)...")
+        print("  [WhatsApp] Aguardando carregamento (ate 3 min - escaneie o QR Code se pedido)...")
         try:
             page.wait_for_selector('span[data-icon="attach-menu-plus"]', timeout=180000)
         except Exception:
-            print("  ⚠ [WhatsApp] Timeout de 3 minutos.")
+            print("  [WhatsApp] Timeout de 3 minutos.")
             browser.close()
             exit(1)
 
         time.sleep(2)
 
         # Envia a mensagem de texto
-        print("  📱 [WhatsApp] Enviando mensagem...")
+        print("  [WhatsApp] Enviando mensagem...")
         page.keyboard.press("Enter")
         time.sleep(3)
 
         # Envia o PDF como anexo
         pdf_path = args.pdf
         if pdf_path and os.path.exists(pdf_path):
-            print(f"  📎 [WhatsApp] Anexando currículo: {os.path.basename(pdf_path)}")
+            print(f"  [WhatsApp] Anexando curriculo: {os.path.basename(pdf_path)}")
             try:
                 # Clica no botão de Anexar
                 page.locator('span[data-icon="attach-menu-plus"]').click()
@@ -87,9 +87,9 @@ def main():
                     time.sleep(2)
 
             except Exception as e:
-                print(f"  ⚠ [WhatsApp] Falha ao enviar PDF: {e}")
+                print(f"  [WhatsApp] Falha ao enviar PDF: {e}")
 
-        print("  ✅ [WhatsApp] Operação concluída!")
+        print("  [WhatsApp] Operacao concluida!")
         time.sleep(2)
         browser.close()
         exit(0)

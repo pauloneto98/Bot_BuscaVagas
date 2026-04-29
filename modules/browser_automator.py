@@ -56,23 +56,16 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
             if is_linkedin:
                 print("  🔑 [LinkedIn] Aguardando sessão autenticada (faça login se solicitado)...")
                 try:
-                    # Vários seletores que indicam que o usuário está logado no LinkedIn
+                    # Se houver botão "Sign In" (class contendo nav__button-secondary ou sign-in), significa deslogado.
+                    # Mas a forma mais segura é: logado = elemento de perfil OU botão "Easy Apply" presente.
                     page.wait_for_selector(
-                        ', '.join([
-                            'img.global-nav__me-photo',          # foto no nav (versão antiga)
-                            '.global-nav__me-photo',             # foto no nav
-                            '[data-control-name="identity_profile_photo"]',
-                            'button[data-control-name="nav.settings"]',
-                            '.feed-identity-module',             # sidebar logado
-                            '.global-nav__primary-items',        # itens do nav logado
-                            'a[href*="/in/"].global-nav__primary-link',  # link pro perfil
-                        ]),
+                        '.global-nav__me-photo, [data-control-name="identity_profile_photo"], button.jobs-apply-button, button:has-text("Easy Apply")',
                         timeout=120000  # 2 min para o usuário fazer login
                     )
-                    print("  ✅ [LinkedIn] Sessão autenticada!")
+                    print("  ✅ [LinkedIn] Sessão autenticada ou botão de candidatar visível!")
                     time.sleep(2)
                 except Exception:
-                    print("  ⚠ [LinkedIn] Login não detectado em 2 minutos. Acionando WhatsApp.")
+                    print("  ⚠ [LinkedIn] Timeout de 2 minutos aguardando login. Acionando WhatsApp.")
                     browser.close()
                     _trigger_whatsapp(job_url, curriculo_path, job_info)
                     return False
