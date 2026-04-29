@@ -30,25 +30,31 @@ USER_AGENTS = [
 
 # ── Categorias de vagas ───────────────────────────────────────────────
 JOB_CATEGORIES = [
-    # Português
-    "desenvolvedor de software junior",
-    "analista de dados junior",
-    "estagio em TI",
+    # Português — todos os níveis
+    "desenvolvedor de software",
+    "analista de dados",
     "suporte de TI",
     "help desk",
-    "qa tester junior",
-    
-    # Inglês (Global Remote)
-    "junior software developer",
-    "junior data analyst",
-    "junior qa tester",
-    "it support technician",
-    "tech companies hiring remote juniors",
-    
-    # Espanhol (Latam / Espanha)
-    "desarrollador de software junior",
-    "analista de datos junior",
-    "soporte tecnico ti",
+    "qa tester",
+    "analista de sistemas",
+    "desenvolvedor web",
+    "desenvolvedor python",
+    "analista de suporte",
+
+    # Inglês (Global Remote) — todos os níveis
+    "software developer remote",
+    "data analyst remote",
+    "it support specialist remote",
+    "qa engineer remote",
+    "backend developer remote",
+    "full stack developer remote",
+    "tech support engineer remote",
+
+    # Espanhol (Latam / Espanha) — todos os níveis
+    "desarrollador de software remoto",
+    "analista de datos remoto",
+    "soporte tecnico ti remoto",
+    "ingeniero de soporte remoto",
 ]
 
 # ── Localizações ──────────────────────────────────────────────────────
@@ -441,25 +447,25 @@ def _try_get_page_description(url: str) -> str:
 # ═══════════════════════════════════════════════════════════════════════
 
 def _is_junior_job(title: str) -> bool:
-    """Filtra títulos, bloqueando apenas vagas de alto nível executivo/gestão.
-    A decisão final de compatibilidade é feita pela IA (Gemini) ao comparar
-    os requisitos da vaga com o currículo base.
+    """Filtro mínimo: bloqueia apenas cargos C-level e VP.
+    Vagas junior, pleno, senior, specialist, etc. todas passam.
+    A IA (Gemini) decide a compatibilidade com o currículo.
     """
     t = title.lower()
 
-    # Bloquear apenas cargos executivos/gestão que estejam muito acima do perfil
+    # Bloquear apenas C-level e cargos de alta gestão estratégica
     hard_block = [
-        "manager", "gerente", "diretor", "director", "head of",
-        "vp ", "vice president", "cto", "cio", "ceo", "coo",
-        "lider", "líder", "lead", "staff engineer", "principal engineer",
-        "coordenador", "coord", "jefe", "scrum master",
+        "ceo", "cto", "cio", "coo", "cfo",
+        "vice president", "vp of", "vp,",
+        "head of engineering", "head of product", "head of data",
+        "chief ",
     ]
 
     for word in hard_block:
         if word in t:
             return False
 
-    # Tudo o que não for cargo executivo passa — a IA decide compatibilidade
+    # Tudo passa — a IA decide se o perfil bate
     return True
 
 def _deduplicate_and_filter_jobs(jobs: list[dict]) -> list[dict]:
