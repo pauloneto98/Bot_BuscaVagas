@@ -30,13 +30,25 @@ USER_AGENTS = [
 
 # ── Categorias de vagas ───────────────────────────────────────────────
 JOB_CATEGORIES = [
+    # Português
     "desenvolvedor de software junior",
     "analista de dados junior",
     "estagio em TI",
     "suporte de TI",
     "help desk",
-    "cientista de dados junior",
     "qa tester junior",
+    
+    # Inglês (Global Remote)
+    "junior software developer",
+    "junior data analyst",
+    "junior qa tester",
+    "it support technician",
+    "tech companies hiring remote juniors",
+    
+    # Espanhol (Latam / Espanha)
+    "desarrollador de software junior",
+    "analista de datos junior",
+    "soporte tecnico ti",
 ]
 
 # ── Localizações ──────────────────────────────────────────────────────
@@ -436,7 +448,7 @@ def _is_junior_job(title: str) -> bool:
     negative_keywords = [
         "senior", "sênior", "sr", "pleno", "pl", "mid-level", "mid", "lead", "lider", "líder",
         "manager", "gerente", "diretor", "especialista", "specialist", "principal", "staff", "head",
-        "coord", "coordenador"
+        "coord", "coordenador", "jefe", "director", "semi-senior", "sssr"
     ]
     
     for word in negative_keywords:
@@ -447,7 +459,7 @@ def _is_junior_job(title: str) -> bool:
     positive_keywords = [
         "junior", "júnior", "jr", "estagio", "estágio", "estagiario", "estagiário", "intern", 
         "internship", "trainee", "iniciante", "entry", "entry-level", "suporte", "help desk",
-        "aprendiz", "assistente", "recém-formado", "grad"
+        "aprendiz", "assistente", "recém-formado", "grad", "soporte", "practicas", "practicante"
     ]
     
     for word in positive_keywords:
@@ -488,11 +500,22 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
     # Montar lista de buscas: (query, localização)
     searches = []
     for category in JOB_CATEGORIES:
-        searches.append((category, "remoto Brasil"))
-        if search_presencial:
-            searches.append((category, "Recife PE"))
-        if search_portugal:
-            searches.append((category, "Portugal"))
+        is_english = any(w in category for w in ["developer", "analyst", "tester", "technician", "hiring"])
+        is_spanish = any(w in category for w in ["desarrollador", "datos", "soporte"])
+        
+        if is_english:
+            searches.append((category, "Remote Worldwide"))
+            searches.append((category, "Remote USA"))
+            searches.append((category, "Remote Europe"))
+        elif is_spanish:
+            searches.append((category, "Remoto Latam"))
+            searches.append((category, "Teletrabajo España"))
+        else:
+            searches.append((category, "remoto Brasil"))
+            if search_presencial:
+                searches.append((category, "Recife PE"))
+            if search_portugal:
+                searches.append((category, "Portugal"))
 
     total = len(searches)
     _log(f"\n🔍 Iniciando busca de vagas ({total} buscas planejadas)...")
