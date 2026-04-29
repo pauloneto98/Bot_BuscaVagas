@@ -34,75 +34,38 @@ def _is_valid_email(email: str) -> bool:
 
 def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:
     """
-    Usa Gemini para gerar o corpo do email em texto puro e HTML.
+    Gera o corpo do e-mail usando template fixo para otimização de tempo e tokens.
     Retorna dict com: assunto, corpo_texto, corpo_html
     """
     idioma = analysis.get("idioma_vaga", "pt-BR")
-    if idioma.startswith("en"):
-        lang = "inglês"
-    elif idioma == "pt-PT":
-        lang = "português de Portugal"
-    elif idioma.startswith("es"):
-        lang = "espanhol"
-    else:
-        lang = "português brasileiro"
-
     skills_str = ", ".join(adapted_data.get("habilidades_tecnicas", [])[:5])
-    objetivo_snippet = adapted_data.get("objetivo", "")[:200]
 
-    prompt = f"""Crie um email profissional de candidatura para uma vaga de emprego.
+    # Se a vaga for gringa, escreve o e-mail em inglês
+    if idioma.startswith("en"):
+        assunto = f"Application – {job.get('titulo', 'Position')} – {CANDIDATE_NAME}"
+        corpo = (
+            f"Dear Hiring Manager,\n\n"
+            f"My name is {CANDIDATE_NAME} and I am writing to apply for the "
+            f"{job.get('titulo', '')} position at {job.get('empresa', 'your company')}.\n\n"
+            f"I have experience with {skills_str} and I am looking for new opportunities "
+            f"to contribute to your team.\n\n"
+            f"Please find my resume attached for your review.\n\n"
+            f"Thank you for your time and consideration. I look forward to hearing from you.\n\n"
+            f"Best regards,\n{CANDIDATE_NAME}"
+        )
+    else:
+        assunto = f"Candidatura – {job.get('titulo', 'Vaga')} – {CANDIDATE_NAME}"
+        corpo = (
+            f"Prezados,\n\n"
+            f"Meu nome é {CANDIDATE_NAME} e gostaria de me candidatar à vaga de "
+            f"{job.get('titulo', '')} na {job.get('empresa', 'sua empresa')}.\n\n"
+            f"Tenho experiência com {skills_str} e estou em busca de novas oportunidades "
+            f"para contribuir com a equipe de vocês.\n\n"
+            f"Segue meu currículo em anexo para apreciação.\n\n"
+            f"Agradeço a atenção e fico à disposição para uma conversa.\n\n"
+            f"Atenciosamente,\n{CANDIDATE_NAME}"
+        )
 
-DADOS:
-- Candidato: {CANDIDATE_NAME}
-- Vaga: {job.get('titulo', '')}
-- Empresa: {job.get('empresa', '')}
-- Habilidades principais: {skills_str}
-- Resumo do candidato: {objetivo_snippet}
-
-REGRAS:
-1. Idioma: {lang}
-2. Profissional, conciso e entusiasmado — máximo 120 palavras no corpo
-3. Mencione a vaga e empresa pelo nome
-4. Destaque 2-3 habilidades relevantes
-5. Mencione que o currículo está em anexo
-6. Não use colchetes ou placeholders
-
-Retorne APENAS JSON válido sem markdown:
-{{
-    "assunto": "linha de assunto clara e profissional",
-    "corpo": "corpo completo com saudação e despedida em texto puro"
-}}"""
-
-    response = _call_gemini(prompt)
-
-    if response:
-        m = re.search(r"\{.*\}", response, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group())
-                assunto = data.get("assunto", "")
-                corpo = data.get("corpo", "")
-                if assunto and corpo:
-                    return {
-                        "assunto": assunto,
-                        "corpo_texto": corpo,
-                        "corpo_html": _text_to_html(corpo, job, CANDIDATE_NAME),
-                    }
-            except json.JSONDecodeError:
-                pass
-
-    # Fallback manual
-    assunto = f"Candidatura – {job.get('titulo', 'Vaga')} – {CANDIDATE_NAME}"
-    corpo = (
-        f"Prezados,\n\n"
-        f"Meu nome é {CANDIDATE_NAME} e gostaria de me candidatar à vaga de "
-        f"{job.get('titulo', '')} na {job.get('empresa', 'sua empresa')}.\n\n"
-        f"Tenho experiência com {skills_str} e estou em busca de novas oportunidades "
-        f"para contribuir com a equipe de vocês.\n\n"
-        f"Segue meu currículo em anexo para apreciação.\n\n"
-        f"Agradeço a atenção e fico à disposição para uma conversa.\n\n"
-        f"Atenciosamente,\n{CANDIDATE_NAME}"
-    )
     return {
         "assunto": assunto,
         "corpo_texto": corpo,

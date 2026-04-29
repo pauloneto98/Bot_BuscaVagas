@@ -58,104 +58,98 @@ def _validate_adapted_data(data: dict, candidate_name: str) -> dict:
     return data
 
 
-def adapt_resume(resume_text: str, job: dict, analysis: dict) -> dict:
+def adapt_resume_and_analyze(resume_text: str, job: dict) -> tuple[dict, dict]:
     """
-    Usa Gemini para adaptar o currículo à vaga.
-    Retorna dict com seções do currículo adaptado.
+    Usa Gemini para analisar a vaga e adaptar o currículo EM UMA ÚNICA CHAMADA.
+    Retorna (adapted_data, analysis_data).
     """
-    idioma = analysis.get("idioma_vaga", "pt-BR")
-    if idioma.startswith("en"):
-        lang_instruction = "O currículo DEVE ser totalmente em INGLÊS."
-        obj_label = "Professional Summary"
-    elif idioma == "pt-PT":
-        lang_instruction = "O currículo deve ser em português de Portugal (evite brasileirismos)."
-        obj_label = "Objetivo Profissional"
-    elif idioma.startswith("es"):
-        lang_instruction = "O currículo DEVE ser totalmente em ESPANHOL."
-        obj_label = "Objetivo Profesional"
-    else:
-        lang_instruction = "O currículo deve ser em português brasileiro."
-        obj_label = "Objetivo Profissional"
+    descricao = job.get('descricao', '')
+    if not descricao or len(descricao) < 20:
+        descricao = f"Vaga de {job['titulo']} na empresa {job['empresa']} em {job['local']}."
 
-    requisitos = ", ".join(analysis.get("requisitos_obrigatorios", [])[:10])
-    palavras_chave = ", ".join(analysis.get("palavras_chave", [])[:10])
-
-    prompt = f"""Você é um especialista sênior em recrutamento com 20 anos de experiência.
-Adapte o currículo para maximizar as chances de aprovação nesta vaga específica.
+    prompt = f"""Você é um especialista sênior em recrutamento e IA.
+Faça a análise desta vaga e adapte o currículo original do candidato para ela em UMA SÓ RESPOSTA.
 
 REGRAS CRÍTICAS:
-1. NÃO invente habilidades, projetos ou experiências inexistentes
-2. Reorganize e destaque as skills mais relevantes para a vaga
-3. Adapte o objetivo para esta vaga específica usando palavras-chave da descrição
-4. Mantenha TODOS os dados de contato originais intactos
-5. {lang_instruction}
-6. Máximo 2 páginas de conteúdo
+1. Identifique o idioma da vaga. O currículo adaptado DEVE ser gerado estritamente no MESMO IDIOMA da vaga.
+2. NÃO invente habilidades, projetos ou experiências inexistentes no currículo original.
+3. Reorganize e destaque as skills do candidato que sejam mais relevantes para os requisitos da vaga.
+4. Adapte o objetivo profissional (3-4 linhas) incluindo palavras-chave da descrição.
+5. Mantenha TODOS os dados de contato originais intactos.
+6. Máximo de 2 páginas de conteúdo.
 
-CURRÍCULO ORIGINAL:
-{resume_text[:4000]}
+CURRÍCULO ORIGINAL DO CANDIDATO:
+{resume_text[:3000]}
 
 VAGA:
 Título: {job.get('titulo', '')}
 Empresa: {job.get('empresa', '')}
 Local: {job.get('local', '')}
-Nível: {analysis.get('nivel', 'junior')}
-Área: {analysis.get('area', '')}
-Requisitos obrigatórios: {requisitos}
-Palavras-chave da vaga: {palavras_chave}
-Descrição: {job.get('descricao', '')[:1500]}
+Descrição: {descricao[:1500]}
 
-Retorne APENAS JSON válido sem markdown:
+Retorne APENAS JSON válido sem markdown no seguinte formato:
 {{
-    "nome": "nome completo",
-    "email": "email",
-    "telefone": "telefone",
-    "linkedin": "url linkedin",
-    "localizacao": "cidade, estado/país",
-    "objetivo": "objetivo profissional adaptado (3-4 linhas, incluindo palavras-chave da vaga)",
-    "experiencia": [
-        {{
-            "cargo": "cargo",
-            "empresa": "empresa",
-            "periodo": "período",
-            "descricao": ["conquista/responsabilidade 1", "conquista 2"]
-        }}
-    ],
-    "formacao": [
-        {{
-            "curso": "curso",
-            "instituicao": "instituição",
-            "periodo": "período"
-        }}
-    ],
-    "habilidades_tecnicas": ["skill1", "skill2"],
-    "habilidades_comportamentais": ["soft skill 1"],
-    "idiomas": ["Português - Nativo", "Inglês - Intermediário"],
-    "projetos": [
-        {{
-            "nome": "nome do projeto",
-            "descricao": "breve descrição com tecnologias"
-        }}
-    ],
-    "certificacoes": ["certificação 1"]
+    "analise": {{
+        "idioma_vaga": "pt-BR|pt-PT|en|es",
+        "nivel": "junior|estagio|pleno",
+        "requisitos_obrigatorios": ["req1"],
+        "palavras_chave": ["kw1"]
+    }},
+    "curriculo": {{
+        "nome": "nome completo",
+        "email": "email",
+        "telefone": "telefone",
+        "linkedin": "url linkedin",
+        "localizacao": "cidade, estado/país",
+        "objetivo": "objetivo adaptado",
+        "experiencia": [
+            {{
+                "cargo": "cargo",
+                "empresa": "empresa",
+                "periodo": "período",
+                "descricao": ["conquista/responsabilidade 1"]
+            }}
+        ],
+        "formacao": [
+            {{
+                "curso": "curso",
+                "instituicao": "instituição",
+                "periodo": "período"
+            }}
+        ],
+        "habilidades_tecnicas": ["skill1", "skill2"],
+        "habilidades_comportamentais": ["soft skill 1"],
+        "idiomas": ["idioma 1"],
+        "projetos": [
+            {{
+                "nome": "nome",
+                "descricao": "descricao"
+            }}
+        ],
+        "certificacoes": ["certificação 1"]
+    }}
 }}"""
 
     print(f"  📝 Adaptando currículo para: {job.get('titulo', '')} ({job.get('empresa', '')})...")
     response_text = _call_gemini(prompt)
 
     if response_text == "__RATE_LIMIT__":
-        return {"_rate_limit_fallback": True}
+        return {"_rate_limit_fallback": True}, {}
 
     if not response_text:
         print("  ⚠ Gemini não respondeu. Usando currículo base.")
-        return {}
+        return {}, {}
 
-    adapted = _extract_json(response_text)
-    if not adapted:
+    result = _extract_json(response_text)
+    if not result:
         print("  ⚠ Não foi possível parsear resposta do Gemini.")
-        return {}
+        return {}, {}
+
+    analise = result.get("analise", {})
+    curriculo = result.get("curriculo", {})
 
     candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Neto")
-    return _validate_adapted_data(adapted, candidate_name)
+    return _validate_adapted_data(curriculo, candidate_name), analise
 
 
 # ═══════════════════════════════════════════════════════════════════════

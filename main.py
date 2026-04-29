@@ -45,8 +45,7 @@ load_dotenv(os.path.join(BASE_DIR, "config.env"))
 MANUAL_EMAILS_FILE = os.path.join(BASE_DIR, "data", "emails_manuais.txt")
 
 from modules.job_scraper import search_all_jobs, _search_linkedin
-from modules.job_analyzer import analyze_job
-from modules.resume_adapter import extract_resume_text, adapt_resume, generate_resume_pdf, generate_resume_docx
+from modules.resume_adapter import extract_resume_text, adapt_resume_and_analyze, generate_resume_pdf, generate_resume_docx
 from modules.company_researcher import find_company_email
 from modules.email_sender import send_application_email
 from modules.logger import load_history, is_already_applied, log_application, get_stats, get_recent, export_csv
@@ -239,12 +238,8 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
             continue
 
         try:
-            # 5a. Analisar vaga
-            analysis = analyze_job(job)
-            time.sleep(2)
-
-            # 5b. Adaptar currículo
-            adapted = adapt_resume(resume_text, job, analysis)
+            # 5. Analisar e Adaptar (CHAMADA ÚNICA)
+            adapted, analysis = adapt_resume_and_analyze(resume_text, job)
             
             pdf_path = ""
             if adapted and adapted.get("_rate_limit_fallback"):
