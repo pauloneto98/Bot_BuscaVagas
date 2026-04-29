@@ -48,7 +48,8 @@ from modules.job_scraper import search_all_jobs, _search_linkedin
 from modules.resume_adapter import extract_resume_text, adapt_resume_and_analyze, generate_resume_pdf, generate_resume_docx
 from modules.company_researcher import find_company_email
 from modules.email_sender import send_application_email
-from modules.logger import load_history, build_applied_set, is_already_applied, log_application, get_stats, get_recent, export_csv
+from modules.browser_automator import apply_via_browser
+from modules.logger import load_history, build_applied_set, is_already_applied, log_application, get_stats, get_recent, export_csv, save_history
 from modules.config_validator import run_validation
 
 console = Console()
@@ -321,15 +322,30 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                 else:
                     error_count += 1
             else:
-                console.print("  [yellow]⚠ Sem email de contato. Currículo gerado mas não enviado.[/yellow]")
-                log_application(
-                    history, job["empresa"], job["titulo"],
-                    job.get("url", ""), False,
-                    curriculo_path=pdf_path,
-                    notas="Email não encontrado",
-                )
-                applied_set.add((emp_key, vaga_key))
-                applied_count += 1
+                console.print("  [yellow]⚠ Sem email de contato. Tentando aplicar via navegador...[/yellow]")
+                if job.get("url"):
+                    success = apply_via_browser(job["url"], pdf_path, job)
+                    log_application(
+                        history, job["empresa"], job["titulo"],
+                        job["url"], success,
+                        curriculo_path=pdf_path,
+                        notas="Via Navegador" if success else "WhatsApp Fallback",
+                    )
+                    applied_set.add((emp_key, vaga_key))
+                    if success:
+                        applied_count += 1
+                    else:
+                        error_count += 1
+                else:
+                    console.print("  [yellow]⚠ Sem URL para aplicar via navegador.[/yellow]")
+                    log_application(
+                        history, job["empresa"], job["titulo"],
+                        "", False,
+                        curriculo_path=pdf_path,
+                        notas="Sem email e sem URL",
+                    )
+                    applied_set.add((emp_key, vaga_key))
+                    error_count += 1
 
             time.sleep(3)
 
@@ -401,6 +417,44 @@ def run_loop():
             console.print(f"[dim]   ⏱ Próximo ciclo em {mins}m {secs:02d}s...[/dim]", end="\r")
         console.print()  # nova linha após o countdown
 
+def retry_failed_applications():
+    """Tenta aplicar via navegador para vagas anteriores que falharam por falta de email."""
+    print_banner()
+    history = load_history()
+    candidaturas = history.get("candidaturas", [])
+    
+    # Filtrar vagas não enviadas que tenham URL
+    to_retry = [c for c in candidaturas if not c.get("email_enviado") and c.get("url")]
+    
+    if not to_retry:
+        console.print("[yellow]⚠ Nenhuma vaga elegível para retry encontrada no histórico.[/yellow]")
+        return
+        
+    console.print(f"\n[bold cyan]🔄 Iniciando Retry em {len(to_retry)} vagas passadas...[/bold cyan]")
+    
+    success_count = 0
+    for i, job in enumerate(to_retry):
+        console.rule(f"[dim]Retry {i+1}/{len(to_retry)}[/dim]")
+        console.print(f"  [bold]📋 {job['vaga']}[/bold]")
+        console.print(f"  [cyan]🏢 {job['empresa']}[/cyan]")
+        
+        pdf_path = job.get("curriculo_gerado", "")
+        if not pdf_path or not os.path.exists(pdf_path):
+            console.print("  [red]✗ PDF original não encontrado para esta vaga. Pulando...[/red]")
+            continue
+            
+        success = apply_via_browser(job["url"], pdf_path, {"empresa": job["empresa"], "titulo": job["vaga"]})
+        if success:
+            job["email_enviado"] = True # Marcamos como enviado (aplicado com sucesso)
+            job["notas"] = "Aplicado via Navegador (Retry)"
+            success_count += 1
+            
+    # Salvar histórico modificado
+    if success_count > 0:
+        save_history(history)
+        
+    console.print(f"\n[bold green]✅ Retry concluído! {success_count} candidaturas enviadas via navegador.[/bold green]")
+
 
 def main():
     parser = argparse.ArgumentParser(description="Bot de Candidatura Automática")
@@ -416,10 +470,17 @@ def main():
                         help="Exibe histórico de candidaturas e estatísticas")
     parser.add_argument("--manual",  action="store_true",
                         help="Processa APENAS emails manuais (data/emails_manuais.txt)")
+    parser.add_argument("--retry-browser", action="store_true",
+                        help="Tenta aplicar via navegador para vagas passadas sem email")
     args = parser.parse_args()
 
     if args.validar:
         run_validation(full=True)
+    elif args.retry_browser:
+        try:
+            retry_failed_applications()
+        except KeyboardInterrupt:
+            console.print("\n\n[yellow]⏹ Retry interrompido pelo usuário.[/yellow]")
     elif args.status:
         show_status()
     elif args.agendar:
