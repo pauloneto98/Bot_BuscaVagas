@@ -48,7 +48,7 @@ from modules.job_scraper import search_all_jobs, _search_linkedin
 from modules.resume_adapter import extract_resume_text, adapt_resume_and_analyze, generate_resume_pdf, generate_resume_docx
 from modules.company_researcher import find_company_email
 from modules.email_sender import send_application_email
-from modules.logger import load_history, is_already_applied, log_application, get_stats, get_recent, export_csv
+from modules.logger import load_history, build_applied_set, is_already_applied, log_application, get_stats, get_recent, export_csv
 from modules.config_validator import run_validation
 
 console = Console()
@@ -223,6 +223,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
 
     # 5. Processar vagas
     applied_count = skipped_count = error_count = 0
+    applied_set = build_applied_set(history)
 
     console.print(f"\n[bold cyan]🚀 Processando {len(jobs)} vagas...[/bold cyan]")
 
@@ -231,8 +232,11 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
         console.print(f"  [bold]📋 {job['titulo']}[/bold]")
         console.print(f"  [cyan]🏢 {job['empresa']}[/cyan]  📍 {job['local']}")
 
-        # Verificar duplicata
-        if is_already_applied(history, job["empresa"], job["titulo"]):
+        # Verificar duplicata usando busca O(1)
+        emp_key = job["empresa"].strip().lower()
+        vaga_key = job["titulo"].strip().lower()
+
+        if (emp_key, vaga_key) in applied_set:
             console.print("  [dim]⏭  Já se candidatou. Pulando...[/dim]")
             skipped_count += 1
             continue
@@ -266,6 +270,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                 error_count += 1
                 log_application(history, job["empresa"], job["titulo"],
                                 job.get("url", ""), False, notas="Erro na adaptação")
+                applied_set.add((emp_key, vaga_key))
                 continue
             else:
                 time.sleep(2)
@@ -291,6 +296,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                 log_application(history, job["empresa"], job["titulo"],
                                 job.get("url", ""), False, curriculo_path=pdf_path,
                                 notas="Modo teste")
+                applied_set.add((emp_key, vaga_key))
                 applied_count += 1
                 continue
 
@@ -309,6 +315,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                     email_destino=company_email,
                     curriculo_path=pdf_path,
                 )
+                applied_set.add((emp_key, vaga_key))
                 if success:
                     applied_count += 1
                 else:
@@ -321,6 +328,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                     curriculo_path=pdf_path,
                     notas="Email não encontrado",
                 )
+                applied_set.add((emp_key, vaga_key))
                 applied_count += 1
 
             time.sleep(3)

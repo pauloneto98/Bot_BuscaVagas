@@ -36,7 +36,17 @@ def save_history(history: dict):
         json.dump(history, f, ensure_ascii=False, indent=2)
 
 
+def build_applied_set(history: dict) -> set[tuple[str, str]]:
+    """Cria um set (O(1) lookup) com as vagas já aplicadas para busca super rápida."""
+    applied = set()
+    for c in history.get("candidaturas", []):
+        empresa = c.get("empresa", "").strip().lower()
+        vaga = c.get("vaga", "").strip().lower()
+        applied.add((empresa, vaga))
+    return applied
+
 def is_already_applied(history: dict, empresa: str, titulo_vaga: str) -> bool:
+    """Função legada para compatibilidade, faz busca linear (O(N)). Preferir build_applied_set."""
     for c in history.get("candidaturas", []):
         if (c["empresa"].lower() == empresa.lower() and
                 c["vaga"].lower() == titulo_vaga.lower()):
