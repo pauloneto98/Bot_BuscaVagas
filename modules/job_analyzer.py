@@ -27,27 +27,29 @@ def _cache_key(job: dict) -> str:
 
 
 def _call_gemini(prompt: str, retries: int = 3) -> str:
-    """Chama a API Gemini com retry exponencial em caso de rate limit."""
+    """Chama a API Gemini. Em caso de Rate Limit, pausa por 5 min e tenta novamente."""
     model = genai.GenerativeModel(MODEL_NAME)
-    for attempt in range(retries):
+    attempt = 0
+    while True:
         try:
             response = model.generate_content(prompt)
             return response.text
         except Exception as e:
             error_msg = str(e).lower()
             if "quota" in error_msg or "rate" in error_msg or "429" in error_msg:
-                wait_time = (attempt + 1) * 20
-                print(f"  ⏳ Rate limit Gemini. Aguardando {wait_time}s (tentativa {attempt+1}/{retries})...")
+                wait_time = 300  # 5 minutos
+                print(f"  ⏳ Rate limit/Cota da API atingida. O bot pausou e tentará novamente em 5 minutos...")
                 time.sleep(wait_time)
+                # Não incrementa attempt, tenta infinitamente até o rate limit resetar
             elif "api_key_invalid" in error_msg or "invalid" in error_msg:
                 print("  ✗ Chave de API Gemini inválida!")
                 return ""
             else:
+                attempt += 1
                 print(f"  ✗ Erro Gemini: {e}")
-                if attempt < retries - 1:
-                    time.sleep(5)
-                else:
+                if attempt >= retries:
                     return ""
+                time.sleep(5)
     return ""
 
 
