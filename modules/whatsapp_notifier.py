@@ -1,103 +1,44 @@
 """
 Módulo para envio de notificações via WhatsApp Web usando Playwright.
+Executa em um subprocesso separado para evitar conflito com outro contexto Playwright ativo.
 Mantém a sessão salva para não precisar escanear o QR Code toda vez.
 """
 import os
+import sys
 import time
 import urllib.parse
-from playwright.sync_api import sync_playwright
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 WA_PROFILE_DIR = os.path.join(DATA_DIR, "whatsapp_profile")
+WA_SENDER_SCRIPT = os.path.join(os.path.dirname(__file__), "_wa_sender.py")
 
 
 def send_whatsapp_alert(phone_number: str, text: str, pdf_path: str = "") -> bool:
     """
-    Abre o WhatsApp Web via Playwright, envia o texto e, se fornecido, faz upload do PDF.
+    Dispara um subprocesso Python separado para abrir o WhatsApp Web via Playwright.
+    Isso evita o conflito de dois contextos Playwright rodando no mesmo processo.
     """
-    os.makedirs(WA_PROFILE_DIR, exist_ok=True)
+    import subprocess
     
+    args = [sys.executable, WA_SENDER_SCRIPT,
+            "--phone", phone_number,
+            "--text", text]
+    if pdf_path and os.path.exists(pdf_path):
+        args += ["--pdf", pdf_path]
+
+    print(f"  📲 [WhatsApp] Disparando notificação para {phone_number}...")
     try:
-        with sync_playwright() as p:
-            # Contexto persistente = salva os cookies e login do WhatsApp
-            browser = p.chromium.launch_persistent_context(
-                user_data_dir=WA_PROFILE_DIR,
-                headless=False,  # Sempre visível para acompanhamento e QR Code (se precisar)
-                viewport={"width": 1024, "height": 768}
-            )
-            
-            page = browser.pages[0] if browser.pages else browser.new_page()
-            
-            # 1. Carregar chat específico já com a mensagem digitada no box
-            encoded_msg = urllib.parse.quote(text)
-            url = f"https://web.whatsapp.com/send?phone={phone_number}&text={encoded_msg}"
-            
-            print(f"  📱 [WhatsApp] Abrindo conversa com {phone_number}...")
-            page.goto(url)
-            
-            # Aguarda a tela principal carregar (até 3 minutos para escanear QR Code)
-            try:
-                # O botão de 'anexar' (clip) aparece quando o chat está pronto
-                print("  ⏳ [WhatsApp] Aguardando carregamento (até 3 min para QR Code se necessário)...")
-                page.wait_for_selector('span[data-icon="attach-menu-plus"]', timeout=180000)
-            except Exception:
-                print("  ⚠ [WhatsApp] Timeout de 3 minutos. Pode ser necessário escanear o QR Code.")
-                print("  ⏳ Feche a janela após escanear e tente novamente na próxima.")
-                browser.close()
-                return False
-                
-            time.sleep(2)
-            
-            # 2. Enviar a mensagem de texto
-            print("  📱 [WhatsApp] Enviando texto...")
-            page.keyboard.press("Enter")
-            time.sleep(2)
-            
-            # 3. Enviar o PDF (se existir)
-            if pdf_path and os.path.exists(pdf_path):
-                print(f"  📎 [WhatsApp] Anexando currículo: {os.path.basename(pdf_path)}")
-                
-                # Clica no botão de Anexar (+)
-                page.locator('span[data-icon="attach-menu-plus"]').click()
-                time.sleep(1)
-                
-                # O input type="file" que aceita documentos (*/*)
-                # O WhatsApp tem múltiplos inputs ocultos, o de documento geralmente é o último ou o que tem accept="*"
-                try:
-                    # Tenta setar o arquivo diretamente no input oculto de documentos
-                    inputs = page.locator('input[type="file"]')
-                    count = inputs.count()
-                    
-                    # Vamos iterar pelos inputs de arquivo e tentar achar o de documento
-                    doc_input_found = False
-                    for i in range(count):
-                        accept_val = inputs.nth(i).get_attribute("accept")
-                        if accept_val == "*" or accept_val == "*/*":
-                            inputs.nth(i).set_input_files(pdf_path)
-                            doc_input_found = True
-                            break
-                    
-                    if not doc_input_found:
-                        # Se não achou pelo accept, tenta o primeiro (geralmente fotos/vídeos, mas vale tentar)
-                        inputs.first.set_input_files(pdf_path)
-                        
-                    # Aguarda a tela de preview do envio
-                    time.sleep(3)
-                    
-                    # Clica no botão verde de enviar da tela de preview
-                    page.locator('span[data-icon="send"]').click()
-                    time.sleep(2)
-                    
-                except Exception as e:
-                    print(f"  ⚠ [WhatsApp] Falha ao enviar anexo: {e}")
-                    
-            print("  ✅ [WhatsApp] Operação concluída.")
-            # Pequeno delay para garantir o disparo pela rede antes de fechar
-            time.sleep(2)
-            browser.close()
+        result = subprocess.run(args, timeout=300)  # 5 min de timeout total
+        if result.returncode == 0:
+            print("  ✅ [WhatsApp] Mensagem enviada com sucesso!")
             return True
-            
+        else:
+            print("  ⚠ [WhatsApp] Subprocesso terminou com erro.")
+            return False
+    except subprocess.TimeoutExpired:
+        print("  ⚠ [WhatsApp] Timeout de 5 minutos. Processo encerrado.")
+        return False
     except Exception as e:
-        print(f"  ❌ [WhatsApp] Erro na automação: {e}")
+        print(f"  ❌ [WhatsApp] Erro ao disparar subprocesso: {e}")
         return False

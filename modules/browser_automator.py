@@ -56,9 +56,17 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
             if is_linkedin:
                 print("  🔑 [LinkedIn] Aguardando sessão autenticada (faça login se solicitado)...")
                 try:
-                    # Aguarda o elemento do menu de perfil (indica que está logado)
+                    # Vários seletores que indicam que o usuário está logado no LinkedIn
                     page.wait_for_selector(
-                        'img.global-nav__me-photo, [data-control-name="nav.settings_and_privacy"]',
+                        ', '.join([
+                            'img.global-nav__me-photo',          # foto no nav (versão antiga)
+                            '.global-nav__me-photo',             # foto no nav
+                            '[data-control-name="identity_profile_photo"]',
+                            'button[data-control-name="nav.settings"]',
+                            '.feed-identity-module',             # sidebar logado
+                            '.global-nav__primary-items',        # itens do nav logado
+                            'a[href*="/in/"].global-nav__primary-link',  # link pro perfil
+                        ]),
                         timeout=120000  # 2 min para o usuário fazer login
                     )
                     print("  ✅ [LinkedIn] Sessão autenticada!")
