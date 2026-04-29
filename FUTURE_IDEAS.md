@@ -20,5 +20,10 @@ Existe um grande potencial de transformar este motor em um negócio rentável no
 - Como o modelo do Gemini Pro é muito barato (quando usado na API paga, *Pay-as-you-go*), o custo de infraestrutura é repassado no valor do pacote, gerando lucro limpo.
 - **Marketing de Diferenciação:** Vender a ideia de "Fugir das plataformas de RH (Gupy)" e enviar o currículo diretamente na caixa de entrada do recrutador.
 
+## 3. Integração com Navegadores Reais (Playwright/Selenium)
+Para contornar o bloqueio de plataformas fechadas (como a Gupy) e agir 100% como um humano, o próximo grande passo técnico para o bot é substituir o *Scraper* tradicional por ferramentas de Automação de Navegador:
+- **Como funciona:** O código abre uma janela real do Google Chrome na tela e usa o mouse/teclado de forma invisível.
+- **Vantagem:** Consegue logar no LinkedIn, clicar em "Candidatura Simplificada", anexar o PDF gerado e passar por barreiras do Cloudflare sem ser detectado como robô. É a evolução definitiva para contornar qualquer barreira de IA ou segurança dos portais de vaga.
+
 ---
 *Documento gerado automaticamente para preservação do estado do projeto.*
