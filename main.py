@@ -372,10 +372,42 @@ def run_scheduled():
         time.sleep(60)
 
 
+def run_loop():
+    """Modo loop contínuo: executa o bot repetidamente até Ctrl+C.
+    Aguarda LOOP_INTERVAL_MINUTES minutos entre cada ciclo (padrão: 45).
+    """
+    interval = int(os.getenv("LOOP_INTERVAL_MINUTES", "45"))
+    cycle = 0
+    console.print(Panel(
+        f"[bold cyan]🔄 MODO LOOP ATIVO[/bold cyan]\n"
+        f"[dim]O bot irá rodar continuamente com {interval} min de pausa entre ciclos.\n"
+        f"Pressione Ctrl+C a qualquer momento para parar.[/dim]",
+        border_style="cyan",
+    ))
+    while True:
+        cycle += 1
+        console.print(f"\n[bold cyan]═══ CICLO {cycle} ═══[/bold cyan]")
+        try:
+            run_bot()
+        except Exception as e:
+            console.print(f"[red]✗ Erro no ciclo {cycle}: {e}[/red]")
+
+        console.print(f"\n[dim]⏳ Aguardando {interval} minutos antes do próximo ciclo...[/dim]")
+        console.print(f"[dim]   (Pressione Ctrl+C para encerrar)[/dim]")
+        for remaining in range(interval * 60, 0, -30):
+            time.sleep(30)
+            mins = remaining // 60
+            secs = remaining % 60
+            console.print(f"[dim]   ⏱ Próximo ciclo em {mins}m {secs:02d}s...[/dim]", end="\r")
+        console.print()  # nova linha após o countdown
+
+
 def main():
     parser = argparse.ArgumentParser(description="Bot de Candidatura Automática")
     parser.add_argument("--agendar", action="store_true",
                         help="Agenda execução diária às 09:00")
+    parser.add_argument("--loop",    action="store_true",
+                        help="Executa em loop contínuo com pausa entre ciclos (Ctrl+C para parar)")
     parser.add_argument("--teste",   action="store_true",
                         help="Modo teste (1 vaga mock, sem enviar email)")
     parser.add_argument("--validar", action="store_true",
@@ -395,6 +427,11 @@ def main():
             run_scheduled()
         except KeyboardInterrupt:
             console.print("\n\n[yellow]⏹ Bot encerrado pelo usuário.[/yellow]")
+    elif args.loop:
+        try:
+            run_loop()
+        except KeyboardInterrupt:
+            console.print("\n\n[yellow]⏹ Modo loop encerrado pelo usuário.[/yellow]")
     elif args.teste:
         run_bot(test_mode=True)
     elif args.manual:
