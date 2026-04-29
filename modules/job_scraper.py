@@ -428,16 +428,48 @@ def _try_get_page_description(url: str) -> str:
 #  ORQUESTRAÇÃO DA BUSCA
 # ═══════════════════════════════════════════════════════════════════════
 
-def _deduplicate_jobs(jobs: list[dict]) -> list[dict]:
-    """Remove vagas duplicadas baseado em título + empresa."""
+def _is_junior_job(title: str) -> bool:
+    """Filtra títulos garantindo que sejam de nível júnior, estagiário ou iniciante."""
+    t = title.lower()
+    
+    # Palavras-chave negativas (níveis altos ou não relacionados)
+    negative_keywords = [
+        "senior", "sênior", "sr", "pleno", "pl", "mid-level", "mid", "lead", "lider", "líder",
+        "manager", "gerente", "diretor", "especialista", "specialist", "principal", "staff", "head",
+        "coord", "coordenador"
+    ]
+    
+    for word in negative_keywords:
+        if re.search(r'\b' + word + r'\b', t):
+            return False
+            
+    # Palavras-chave positivas (níveis de entrada)
+    positive_keywords = [
+        "junior", "júnior", "jr", "estagio", "estágio", "estagiario", "estagiário", "intern", 
+        "internship", "trainee", "iniciante", "entry", "entry-level", "suporte", "help desk",
+        "aprendiz", "assistente", "recém-formado", "grad"
+    ]
+    
+    for word in positive_keywords:
+        if re.search(r'\b' + word + r'\b', t):
+            return True
+            
+    # Se não tiver palavra negativa, assumimos que pode ser entrada/genérico
+    return True
+
+def _deduplicate_and_filter_jobs(jobs: list[dict]) -> list[dict]:
+    """Remove vagas duplicadas e filtra para manter apenas nível iniciante/júnior."""
     seen = set()
-    unique = []
+    filtered = []
     for job in jobs:
+        if not _is_junior_job(job["titulo"]):
+            continue
+            
         key = (job["titulo"].lower().strip(), job["empresa"].lower().strip())
         if key not in seen:
             seen.add(key)
-            unique.append(job)
-    return unique
+            filtered.append(job)
+    return filtered
 
 
 def search_all_jobs(max_per_category: int = None) -> list[dict]:
@@ -505,8 +537,8 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
         all_jobs.extend(found_this_round[:max_per_category])
         _random_delay(1, 3)
 
-    # Remover duplicatas
-    unique_jobs = _deduplicate_jobs(all_jobs)
+    # Filtrar juniores e remover duplicatas
+    unique_jobs = _deduplicate_and_filter_jobs(all_jobs)
 
     # Estatísticas
     s = get_stats()
