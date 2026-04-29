@@ -17,7 +17,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from .job_analyzer import _call_gemini, _extract_json
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+OUTPUT_DIR = os.path.join(BASE_DIR, "data", "curriculos")
 
 # Cores do tema
 COLOR_PRIMARY = (41, 65, 122)
@@ -141,6 +141,9 @@ Retorne APENAS JSON válido sem markdown:
 
     print(f"  📝 Adaptando currículo para: {job.get('titulo', '')} ({job.get('empresa', '')})...")
     response_text = _call_gemini(prompt)
+
+    if response_text == "__RATE_LIMIT__":
+        return {"_rate_limit_fallback": True}
 
     if not response_text:
         print("  ⚠ Gemini não respondeu. Usando currículo base.")

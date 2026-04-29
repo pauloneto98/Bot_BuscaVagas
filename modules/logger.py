@@ -97,10 +97,11 @@ def _append_md(entry: dict):
     with open(MD_FILE, "a", encoding="utf-8") as f:
         if not file_exists:
             f.write("# 📋 Relatório de Candidaturas Enviadas\n\n")
-            f.write("| Data | Empresa | Vaga | Email de Destino |\n")
-            f.write("|------|---------|------|------------------|\n")
+            f.write("| Data | Empresa | Vaga | Email de Destino | Arquivo CV |\n")
+            f.write("|------|---------|------|------------------|------------|\n")
             
-        f.write(f"| {entry['data']} | **{entry['empresa']}** | {entry['vaga']} | `{entry.get('email_destino', '')}` |\n")
+        cv_name = os.path.basename(entry.get('curriculo_gerado', ''))
+        f.write(f"| {entry['data']} | **{entry['empresa']}** | {entry['vaga']} | `{entry.get('email_destino', '')}` | `{cv_name}` |\n")
 
 
 def get_stats(history: dict) -> dict:

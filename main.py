@@ -15,6 +15,9 @@ import argparse
 import os
 import sys
 import time
+import glob
+import shutil
+import re
 import io
 from datetime import datetime
 
@@ -242,20 +245,41 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
 
             # 5b. Adaptar currículo
             adapted = adapt_resume(resume_text, job, analysis)
-            if not adapted:
+            
+            pdf_path = ""
+            if adapted and adapted.get("_rate_limit_fallback"):
+                console.print("  [yellow]⚠ Rate Limit: Procurando currículo fallback (genérico da vaga)...[/yellow]")
+                vaga_slug = re.sub(r"[^\w]", "_", job.get('titulo', 'vaga'))[:30]
+                curriculos_dir = os.path.join(BASE_DIR, "data", "curriculos")
+                os.makedirs(curriculos_dir, exist_ok=True)
+                
+                # Procura se já gerou um currículo para esta vaga
+                existing_pdfs = glob.glob(os.path.join(curriculos_dir, f"*_{vaga_slug}_*.pdf"))
+                if existing_pdfs:
+                    pdf_path = existing_pdfs[0]
+                    console.print(f"  [green]✅ Reutilizando currículo: {os.path.basename(pdf_path)}[/green]")
+                else:
+                    pdf_path = os.path.join(curriculos_dir, f"Curriculo_{candidate_name.replace(' ', '_')}_{vaga_slug}_01.pdf")
+                    base_pdf = os.getenv("RESUME_PDF_PATH", "Curriculo_Paulo_Net0.pdf")
+                    if os.path.exists(base_pdf):
+                        shutil.copy(base_pdf, pdf_path)
+                        console.print(f"  [green]✅ Currículo base categorizado como: {os.path.basename(pdf_path)}[/green]")
+                    else:
+                        pdf_path = ""
+            elif not adapted:
                 console.print("  [yellow]⚠ Não foi possível adaptar o currículo.[/yellow]")
                 error_count += 1
                 log_application(history, job["empresa"], job["titulo"],
                                 job.get("url", ""), False, notas="Erro na adaptação")
                 continue
-            time.sleep(2)
-
-            # 5c. Gerar PDF e DOCX
-            pdf_path = generate_resume_pdf(adapted, job, candidate_name)
-            generate_resume_docx(adapted, job, candidate_name)  # Bônus: DOCX
+            else:
+                time.sleep(2)
+                # 5c. Gerar PDF e DOCX
+                pdf_path = generate_resume_pdf(adapted, job, candidate_name)
+                generate_resume_docx(adapted, job, candidate_name)
 
             if not pdf_path:
-                console.print("  [yellow]⚠ Erro ao gerar PDF.[/yellow]")
+                console.print("  [yellow]⚠ Erro ao gerar/encontrar PDF.[/yellow]")
                 error_count += 1
                 continue
 

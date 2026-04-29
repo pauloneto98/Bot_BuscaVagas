@@ -37,10 +37,8 @@ def _call_gemini(prompt: str, retries: int = 3) -> str:
         except Exception as e:
             error_msg = str(e).lower()
             if "quota" in error_msg or "rate" in error_msg or "429" in error_msg:
-                wait_time = 300  # 5 minutos
-                print(f"  ⏳ Rate limit/Cota da API atingida. O bot pausou e tentará novamente em 5 minutos...")
-                time.sleep(wait_time)
-                # Não incrementa attempt, tenta infinitamente até o rate limit resetar
+                print(f"  ⏳ Rate limit/Cota da API atingida. Ativando fallback de currículo...")
+                return "__RATE_LIMIT__"
             elif "api_key_invalid" in error_msg or "invalid" in error_msg:
                 print("  ✗ Chave de API Gemini inválida!")
                 return ""
