@@ -12,6 +12,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 CSV_FILE = os.path.join(DATA_DIR, "candidaturas.csv")
+MD_FILE = os.path.join(DATA_DIR, "candidaturas_enviadas.md")
 
 
 def _ensure_data_dir():
@@ -67,6 +68,7 @@ def log_application(
     history["candidaturas"].append(entry)
     save_history(history)
     _append_csv(entry)
+    _append_md(entry)
     return entry
 
 
@@ -82,6 +84,23 @@ def _append_csv(entry: dict):
         if not file_exists:
             writer.writeheader()
         writer.writerow(entry)
+
+
+def _append_md(entry: dict):
+    """Acrescenta a vaga no Markdown caso o email tenha sido enviado."""
+    if not entry.get("email_enviado"):
+        return
+        
+    _ensure_data_dir()
+    file_exists = os.path.exists(MD_FILE)
+    
+    with open(MD_FILE, "a", encoding="utf-8") as f:
+        if not file_exists:
+            f.write("# 📋 Relatório de Candidaturas Enviadas\n\n")
+            f.write("| Data | Empresa | Vaga | Email de Destino |\n")
+            f.write("|------|---------|------|------------------|\n")
+            
+        f.write(f"| {entry['data']} | **{entry['empresa']}** | {entry['vaga']} | `{entry.get('email_destino', '')}` |\n")
 
 
 def get_stats(history: dict) -> dict:
