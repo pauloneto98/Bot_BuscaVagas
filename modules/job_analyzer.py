@@ -16,7 +16,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, "config.env"))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-MODEL_NAME = "gemini-2.5-pro"
+MODEL_NAME = "gemini-1.5-flash"
 
 # Cache simples em memória para evitar re-analisar mesma vaga na sessão
 _analysis_cache: dict[str, dict] = {}

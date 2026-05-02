@@ -28,33 +28,13 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:127.0) Gecko/20100101 Firefox/127.0",
 ]
 
-# ── Categorias de vagas ───────────────────────────────────────────────
+# ── Categorias de vagas (reduzido para otmizar) ───────────────────
 JOB_CATEGORIES = [
-    # Português — todos os níveis
+    # Português — mais relevantes
     "desenvolvedor de software",
     "analista de dados",
     "suporte de TI",
     "help desk",
-    "qa tester",
-    "analista de sistemas",
-    "desenvolvedor web",
-    "desenvolvedor python",
-    "analista de suporte",
-
-    # Inglês (Global Remote) — todos os níveis
-    "software developer remote",
-    "data analyst remote",
-    "it support specialist remote",
-    "qa engineer remote",
-    "backend developer remote",
-    "full stack developer remote",
-    "tech support engineer remote",
-
-    # Espanhol (Latam / Espanha) — todos os níveis
-    "desarrollador de software remoto",
-    "analista de datos remoto",
-    "soporte tecnico ti remoto",
-    "ingeniero de soporte remoto",
 ]
 
 # ── Localizações ──────────────────────────────────────────────────────
@@ -65,9 +45,9 @@ LOCATIONS_PRESENCIAL = [
 ]
 LOCATIONS_PORTUGAL = ["Portugal"]
 
-# ── Config de delays ──────────────────────────────────────────────────
-DELAY_MIN = float(os.getenv("REQUEST_DELAY_MIN", "2"))
-DELAY_MAX = float(os.getenv("REQUEST_DELAY_MAX", "5"))
+# ── Config de delays (otimizado) ─────────────────────────────────
+DELAY_MIN = float(os.getenv("REQUEST_DELAY_MIN", "0.3"))
+DELAY_MAX = float(os.getenv("REQUEST_DELAY_MAX", "0.8"))
 
 # ── Frases que indicam CAPTCHA/bloqueio ──────────────────────────────
 BLOCK_SIGNALS = [
@@ -489,32 +469,21 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
     e LinkedIn (secundário). Retorna lista de vagas.
     """
     if max_per_category is None:
-        max_per_category = int(os.getenv("MAX_JOBS_PER_CATEGORY", "5"))
-
-    search_presencial = os.getenv("SEARCH_PRESENCIAL", "true").lower() == "true"
-    search_portugal = os.getenv("SEARCH_PORTUGAL", "true").lower() == "true"
+        max_per_category = int(os.getenv("MAX_JOBS_PER_CATEGORY", "3"))
 
     all_jobs = []
 
-    # Montar lista de buscas: (query, localização)
+    # Montar lista de buscas otimizada (apenas Brasil.remote + Recife + Portugal)
     searches = []
     for category in JOB_CATEGORIES:
-        is_english = any(w in category for w in ["developer", "analyst", "tester", "technician", "hiring"])
-        is_spanish = any(w in category for w in ["desarrollador", "datos", "soporte"])
-        
-        if is_english:
-            searches.append((category, "Remote Worldwide"))
-            searches.append((category, "Remote USA"))
-            searches.append((category, "Remote Europe"))
-        elif is_spanish:
-            searches.append((category, "Remoto Latam"))
-            searches.append((category, "Teletrabajo España"))
-        else:
-            searches.append((category, "remoto Brasil"))
-            if search_presencial:
-                searches.append((category, "Recife PE"))
-            if search_portugal:
-                searches.append((category, "Portugal"))
+        searches.append((category, "remoto Brasil"))
+        searches.append((category, "Recife PE"))
+    
+    # Apenas as primeiras 5 categorias para Portugal
+    for category in JOB_CATEGORIES[:5]:
+        searches.append((category, "Portugal"))
+
+    _log(f"\n🔍 Iniciando busca de vagas ({len(searches)} buscas planejadas)...")
 
     total = len(searches)
     _log(f"\n🔍 Iniciando busca de vagas ({total} buscas planejadas)...")
@@ -534,7 +503,7 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
         else:
             _log(f"  Google: 0 vagas (bloqueado ou sem resultados)")
 
-        _random_delay(1, 2)
+        _random_delay(0.5, 1)
 
         # ── 2. DuckDuckGo (fallback) ────────────────────────────────
         if len(found_this_round) < 3:
@@ -544,7 +513,7 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
                 found_this_round.extend(ddg_jobs)
             else:
                 _log(f"  DuckDuckGo: 0 vagas")
-            _random_delay(1, 2)
+            _random_delay(0.5, 1)
 
         # ── 3. LinkedIn (tentativa rápida) ──────────────────────────
         remote = "remoto" in location.lower()
@@ -557,7 +526,7 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
 
         # Limitar por categoria
         all_jobs.extend(found_this_round[:max_per_category])
-        _random_delay(1, 3)
+        _random_delay(0.5, 1.5)
 
     # Filtrar juniores e remover duplicatas
     unique_jobs = _deduplicate_and_filter_jobs(all_jobs)
@@ -569,20 +538,9 @@ def search_all_jobs(max_per_category: int = None) -> list[dict]:
     for source in ["google", "duckduckgo", "linkedin"]:
         _log(f"   {source.capitalize():12} → ok:{s[source]['ok']} bloqueado:{s[source]['blocked']} erro:{s[source]['error']}")
 
-    # Tentar obter descrições mais detalhadas
+    # Garantir que tem pelo menos uma descrição básica (sem enriquecimento para otimizar)
     if unique_jobs:
-        _log(f"\n📄 Enriquecendo descrições ({len(unique_jobs)} vagas)...")
-        for i, job in enumerate(unique_jobs):
-            if len(job.get("descricao", "")) > 200:
-                continue  # Já tem descrição boa
-            if job.get("url"):
-                _log(f"  [{i+1}/{len(unique_jobs)}] {job['titulo'][:40]} - {job['empresa'][:20]}")
-                desc = _try_get_page_description(job["url"])
-                if desc and len(desc) > len(job.get("descricao", "")):
-                    job["descricao"] = desc
-                _random_delay(1, 2)
-
-            # Garantir que tem pelo menos uma descrição básica
+        for job in unique_jobs:
             if not job.get("descricao"):
                 job["descricao"] = (
                     f"Vaga de {job['titulo']} na empresa {job['empresa']} "

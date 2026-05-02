@@ -144,7 +144,7 @@ def find_company_email(company_name: str) -> dict:
 
     # ── Etapa 1: Busca focada em RH/vagas ─────────────────────────
     for query in hr_queries:
-        _random_delay(1, 2)
+        _random_delay(0.3, 0.7)
         search_results = _search_google(query) or _search_duckduckgo(query)
 
         for r in search_results[:6]:
@@ -171,7 +171,7 @@ def find_company_email(company_name: str) -> dict:
 
     # ── Etapa 2: Tentar páginas /contato /carreiras do site ────────
     if website_url and not all_emails:
-        _random_delay(1, 2)
+        _random_delay(0.3, 0.7)
         contact_pages = _find_contact_pages(website_url)
         for page_url in contact_pages:
             page_emails = _scrape_page_emails(page_url)
@@ -187,7 +187,7 @@ def find_company_email(company_name: str) -> dict:
             f'"{company_name}" "@" site',
         ]
         for query in fallback_queries:
-            _random_delay(1, 2)
+            _random_delay(0.3, 0.7)
             search_results = _search_google(query) or _search_duckduckgo(query)
 
             for r in search_results[:8]:

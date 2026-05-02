@@ -259,13 +259,12 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                     pdf_path = existing_pdfs[0]
                     console.print(f"  [green]✅ Reutilizando currículo: {os.path.basename(pdf_path)}[/green]")
                 else:
-                    pdf_path = os.path.join(curriculos_dir, f"Curriculo_{candidate_name.replace(' ', '_')}_{vaga_slug}_01.pdf")
-                    base_pdf = os.getenv("RESUME_PDF_PATH", "Curriculo_Paulo_Net0.pdf")
+                    base_pdf = os.path.join(BASE_DIR, "Curriculo_Paulo_Net0.pdf")
                     if os.path.exists(base_pdf):
-                        shutil.copy(base_pdf, pdf_path)
-                        console.print(f"  [green]✅ Currículo base categorizado como: {os.path.basename(pdf_path)}[/green]")
+                        pdf_path = base_pdf
+                        console.print(f"  [green]✅ Usando currículo original como fallback (rate limit)[/green]")
                     else:
-                        pdf_path = ""
+                        console.print(f"  [red]✗ Currículo original não encontrado: {base_pdf}[/red]")
             elif not adapted:
                 console.print("  [yellow]⚠ Não foi possível adaptar o currículo.[/yellow]")
                 error_count += 1
