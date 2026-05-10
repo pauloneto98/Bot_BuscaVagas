@@ -1,10 +1,9 @@
 """
-Módulo de Adaptação de Currículo — v2
-Extrai texto do PDF original, adapta com Gemini e gera PDF + DOCX.
-Melhorias: validação do JSON, geração DOCX, prompt aprimorado, fallback com currículo original.
+Módulo de Adaptação de Currículo — v3
+Extrai texto do PDF, adapta com Gemini, gera PDF/DOCX de 1 página.
+Suporte a inglês para vagas internacionais.
 """
 
-import json
 import os
 import re
 
@@ -19,19 +18,71 @@ from .job_analyzer import _call_gemini, _extract_json
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "data", "curriculos")
 
-# Cores do tema
 COLOR_PRIMARY = (41, 65, 122)
 COLOR_ACCENT = (0, 119, 181)
 COLOR_SECONDARY = (80, 80, 80)
 COLOR_LIGHT = (140, 140, 140)
+
+# Section headers by language
+SECTION_HEADERS = {
+    "en": {
+        "objective": "Professional Objective",
+        "experience": "Professional Experience",
+        "education": "Education",
+        "tech_skills": "Technical Skills",
+        "soft_skills": "Soft Skills",
+        "projects": "Projects",
+        "certifications": "Certifications",
+        "languages": "Languages",
+    },
+    "pt": {
+        "objective": "Objetivo Profissional",
+        "experience": "Experiência Profissional",
+        "education": "Formação Acadêmica",
+        "tech_skills": "Habilidades Técnicas",
+        "soft_skills": "Habilidades Comportamentais",
+        "projects": "Projetos",
+        "certifications": "Certificações",
+        "languages": "Idiomas",
+    },
+}
 
 
 def _ensure_output_dir():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-def extract_resume_text(pdf_path: str) -> str:
-    """Extrai todo o texto do currículo PDF."""
+def _get_headers(lang_code):
+    """Returns section headers dict based on language."""
+    if lang_code and lang_code.startswith("en"):
+        return SECTION_HEADERS["en"]
+    return SECTION_HEADERS["pt"]
+
+
+def is_international_job(job):
+    """Detects if a job is international (needs English resume)."""
+    source = job.get("fonte", "").lower()
+    location = job.get("local", "").lower()
+
+    international_sources = ["wellfound", "remoteok", "weworkremotely"]
+    if any(s in source for s in international_sources):
+        return True
+
+    brazil_pt_keywords = [
+        "brasil", "brazil", "recife", "são paulo", "rio de janeiro",
+        "belo horizonte", "curitiba", "porto alegre", "salvador",
+        "fortaleza", "brasília", "jaboatao",
+        "portugal", "lisboa", "porto", "braga", "coimbra",
+    ]
+    if not any(kw in location for kw in brazil_pt_keywords):
+        # Check if location seems international
+        if location and location not in ["", "remote", "remoto"]:
+            return True
+
+    return False
+
+
+def extract_resume_text(pdf_path):
     try:
         doc = fitz.open(pdf_path)
         text = ""
@@ -44,8 +95,7 @@ def extract_resume_text(pdf_path: str) -> str:
         return ""
 
 
-def _validate_adapted_data(data: dict, candidate_name: str) -> dict:
-    """Valida e preenche campos obrigatórios ausentes no JSON adaptado."""
+def _validate_adapted_data(data, candidate_name):
     if not data.get("nome"):
         data["nome"] = candidate_name
     for field in ["email", "telefone", "linkedin", "localizacao", "objetivo"]:
@@ -58,25 +108,37 @@ def _validate_adapted_data(data: dict, candidate_name: str) -> dict:
     return data
 
 
-def adapt_resume_and_analyze(resume_text: str, job: dict) -> tuple[dict, dict]:
-    """
-    Usa Gemini para analisar a vaga e adaptar o currículo EM UMA ÚNICA CHAMADA.
-    Retorna (adapted_data, analysis_data).
-    """
+def adapt_resume_and_analyze(resume_text, job):
+    """Adapta currículo com Gemini. 1 página, inglês para vagas internacionais."""
     descricao = job.get('descricao', '')
     if not descricao or len(descricao) < 20:
         descricao = f"Vaga de {job['titulo']} na empresa {job['empresa']} em {job['local']}."
+
+    international = is_international_job(job)
+    lang_instruction = (
+        "The resume MUST be generated entirely in ENGLISH. Use English section names and content."
+        if international else
+        "Identifique o idioma da vaga. O currículo adaptado DEVE ser gerado no MESMO IDIOMA da vaga."
+    )
 
     prompt = f"""Você é um especialista sênior em recrutamento e IA.
 Faça a análise desta vaga e adapte o currículo original do candidato para ela em UMA SÓ RESPOSTA.
 
 REGRAS CRÍTICAS:
-1. Identifique o idioma da vaga. O currículo adaptado DEVE ser gerado estritamente no MESMO IDIOMA da vaga.
+1. {lang_instruction}
 2. NÃO invente habilidades, projetos ou experiências inexistentes no currículo original.
 3. Reorganize e destaque as skills do candidato que sejam mais relevantes para os requisitos da vaga.
-4. Adapte o objetivo profissional (3-4 linhas) incluindo palavras-chave da descrição.
+4. O currículo DEVE caber em EXATAMENTE 1 PÁGINA. Para isso:
+   - Objetivo: máximo 2 linhas, direto e com palavras-chave da vaga.
+   - Experiência: máximo 3 posições mais relevantes, com no máximo 2 bullet points cada.
+   - Formação: máximo 2 itens.
+   - Habilidades técnicas: máximo 8 skills (as mais relevantes primeiro).
+   - Habilidades comportamentais: máximo 4.
+   - Projetos: máximo 2 (apenas se muito relevantes, senão omita).
+   - Certificações: máximo 3 (apenas se relevantes, senão omita).
+   - Idiomas: lista compacta.
 5. Mantenha TODOS os dados de contato originais intactos.
-6. Máximo de 2 páginas de conteúdo.
+6. Priorize: Experiência > Habilidades Técnicas > Formação > Projetos > Certificações.
 
 CURRÍCULO ORIGINAL DO CANDIDATO:
 {resume_text[:3000]}
@@ -90,7 +152,7 @@ Descrição: {descricao[:1500]}
 Retorne APENAS JSON válido sem markdown no seguinte formato:
 {{
     "analise": {{
-        "idioma_vaga": "pt-BR|pt-PT|en|es",
+        "idioma_vaga": "{'en' if international else 'pt-BR|pt-PT|en|es'}",
         "nivel": "junior|estagio|pleno",
         "requisitos_obrigatorios": ["req1"],
         "palavras_chave": ["kw1"]
@@ -101,13 +163,13 @@ Retorne APENAS JSON válido sem markdown no seguinte formato:
         "telefone": "telefone",
         "linkedin": "url linkedin",
         "localizacao": "cidade, estado/país",
-        "objetivo": "objetivo adaptado",
+        "objetivo": "objetivo adaptado (max 2 linhas)",
         "experiencia": [
             {{
                 "cargo": "cargo",
                 "empresa": "empresa",
                 "periodo": "período",
-                "descricao": ["conquista/responsabilidade 1"]
+                "descricao": ["conquista 1", "conquista 2"]
             }}
         ],
         "formacao": [
@@ -123,14 +185,16 @@ Retorne APENAS JSON válido sem markdown no seguinte formato:
         "projetos": [
             {{
                 "nome": "nome",
-                "descricao": "descricao"
+                "descricao": "descricao curta"
             }}
         ],
         "certificacoes": ["certificação 1"]
     }}
 }}"""
 
-    print(f"  📝 Adaptando currículo para: {job.get('titulo', '')} ({job.get('empresa', '')})...")
+    print(f"  Adaptando currículo para: {job.get('titulo', '')} ({job.get('empresa', '')})...")
+    if international:
+        print("  🌍 Vaga internacional detectada — currículo em INGLÊS")
     response_text = _call_gemini(prompt)
 
     if response_text == "__RATE_LIMIT__":
@@ -148,83 +212,76 @@ Retorne APENAS JSON válido sem markdown no seguinte formato:
     analise = result.get("analise", {})
     curriculo = result.get("curriculo", {})
 
-    candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Neto")
+    # Force English for international jobs
+    if international:
+        analise["idioma_vaga"] = "en"
+
+    candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
     return _validate_adapted_data(curriculo, candidate_name), analise
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  GERADOR DE PDF
+#  GERADOR DE PDF (1 página, compacto)
 # ═══════════════════════════════════════════════════════════════════════
 
-# Mapa de caracteres Unicode → equivalentes ASCII seguros para Helvetica
 _UNICODE_REPLACEMENTS = {
-    "\u2013": "-",   # en-dash
-    "\u2014": "-",   # em-dash
-    "\u2018": "'",   # left single quote
-    "\u2019": "'",   # right single quote
-    "\u201c": '"',   # left double quote
-    "\u201d": '"',   # right double quote
-    "\u2026": "...", # ellipsis
-    "\u00b7": "-",   # middle dot
-    "\u2022": "-",   # bullet
-    "\u2010": "-",   # hyphen
-    "\u2011": "-",   # non-breaking hyphen
-    "\u00a0": " ",   # non-breaking space
-    "\u200b": "",    # zero-width space
-    "\u00ad": "",    # soft hyphen
+    "\u2013": "-", "\u2014": "-", "\u2018": "'", "\u2019": "'",
+    "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u00b7": "-",
+    "\u2022": "-", "\u2010": "-", "\u2011": "-", "\u00a0": " ",
+    "\u200b": "", "\u00ad": "",
 }
 
 
-def _sanitize_text(text: str) -> str:
-    """Substitui caracteres Unicode não suportados pela fonte Helvetica."""
+def _sanitize_text(text):
     if not text:
         return ""
     for unicode_char, replacement in _UNICODE_REPLACEMENTS.items():
         text = text.replace(unicode_char, replacement)
-    # Remove quaisquer caracteres fora do Latin-1 que restarem
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
 class ResumePDF(FPDF):
-    """Gera PDFs de currículo com formatação profissional."""
+    """PDF de currículo compacto — otimizado para 1 página."""
 
     def __init__(self):
         super().__init__()
-        self.set_auto_page_break(auto=True, margin=20)
+        self.set_auto_page_break(auto=False, margin=10)
         self.COLOR_PRIMARY = COLOR_PRIMARY
         self.COLOR_SECONDARY = COLOR_SECONDARY
         self.COLOR_ACCENT = COLOR_ACCENT
         self.COLOR_LIGHT = COLOR_LIGHT
-        self.COLOR_LINE = (200, 200, 200)
 
-    def _add_section_title(self, title: str):
-        self.ln(4)
-        self.set_font("Helvetica", "B", 11)
+    def _add_section_title(self, title):
+        self.ln(2)
+        self.set_font("Helvetica", "B", 9)
         self.set_text_color(*self.COLOR_PRIMARY)
-        self.cell(0, 7, _sanitize_text(title.upper()), new_x="LMARGIN", new_y="NEXT")
+        self.cell(0, 5, _sanitize_text(title.upper()), new_x="LMARGIN", new_y="NEXT")
         self.set_draw_color(*self.COLOR_ACCENT)
-        self.set_line_width(0.5)
+        self.set_line_width(0.4)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
-        self.ln(3)
+        self.ln(1.5)
 
-    def _add_text(self, text: str, bold: bool = False, size: int = 9, color: tuple = None):
+    def _add_text(self, text, bold=False, size=8, color=None):
         style = "B" if bold else ""
         self.set_font("Helvetica", style, size)
         self.set_text_color(*(color or self.COLOR_SECONDARY))
-        self.multi_cell(0, 5, _sanitize_text(text))
+        self.multi_cell(0, 4, _sanitize_text(text))
 
-    def _add_bullet(self, text: str):
-        self.set_font("Helvetica", "", 9)
+    def _add_bullet(self, text):
+        self.set_font("Helvetica", "", 7.5)
         self.set_text_color(*self.COLOR_SECONDARY)
-        bullet_x = self.l_margin + 4
+        bullet_x = self.l_margin + 3
         self.set_x(bullet_x)
-        self.cell(4, 5, "-")
-        self.set_x(bullet_x + 5)
-        self.multi_cell(self.w - self.r_margin - bullet_x - 5, 5, _sanitize_text(text))
+        self.cell(3, 4, "-")
+        self.set_x(bullet_x + 4)
+        self.multi_cell(self.w - self.r_margin - bullet_x - 4, 4, _sanitize_text(text))
+
+    def _fits_page(self):
+        return self.get_y() < (self.h - 15)
 
 
-def generate_resume_pdf(adapted_data: dict, job: dict, candidate_name: str) -> str:
-    """Gera um PDF de currículo profissional. Retorna caminho do arquivo."""
+def generate_resume_pdf(adapted_data, job, candidate_name):
+    """Gera PDF de currículo de 1 página."""
     _ensure_output_dir()
 
     empresa_slug = re.sub(r"[^\w]", "_", job.get("empresa", "empresa"))[:30]
@@ -232,117 +289,133 @@ def generate_resume_pdf(adapted_data: dict, job: dict, candidate_name: str) -> s
     filename = f"CV_{candidate_name.replace(' ', '_')}_{empresa_slug}_{vaga_slug}.pdf"
     filepath = os.path.join(OUTPUT_DIR, filename)
 
+    # Determine language for section headers
+    lang = adapted_data.get("_lang", "pt")
+    headers = _get_headers(lang)
+
     pdf = ResumePDF()
     pdf.add_page()
+    pdf.set_left_margin(12)
+    pdf.set_right_margin(12)
+    pdf.set_x(12)
 
-    # ── CABEÇALHO ─────────────────────────────────────────────────
+    # ── HEADER ────────────────────────────────────────────────────
     nome = adapted_data.get("nome", candidate_name)
-    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(*pdf.COLOR_PRIMARY)
-    pdf.cell(0, 10, _sanitize_text(nome), new_x="LMARGIN", new_y="NEXT", align="C")
+    pdf.cell(0, 8, _sanitize_text(nome), new_x="LMARGIN", new_y="NEXT", align="C")
 
-    contato_parts = [
+    contato_parts = [p for p in [
         adapted_data.get("email", ""),
         adapted_data.get("telefone", ""),
         adapted_data.get("localizacao", ""),
-    ]
-    contato_parts = [p for p in contato_parts if p]
+    ] if p]
     if contato_parts:
-        pdf.set_font("Helvetica", "", 9)
+        pdf.set_font("Helvetica", "", 7.5)
         pdf.set_text_color(*pdf.COLOR_LIGHT)
-        pdf.cell(0, 5, _sanitize_text("  |  ".join(contato_parts)), new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.cell(0, 4, _sanitize_text("  |  ".join(contato_parts)), new_x="LMARGIN", new_y="NEXT", align="C")
 
     if adapted_data.get("linkedin"):
-        pdf.set_font("Helvetica", "", 8)
+        pdf.set_font("Helvetica", "", 7)
         pdf.set_text_color(*pdf.COLOR_ACCENT)
-        pdf.cell(0, 5, _sanitize_text(adapted_data["linkedin"]), new_x="LMARGIN", new_y="NEXT", align="C")
+        pdf.cell(0, 4, _sanitize_text(adapted_data["linkedin"]), new_x="LMARGIN", new_y="NEXT", align="C")
 
-    pdf.ln(2)
+    pdf.ln(1)
     pdf.set_draw_color(*pdf.COLOR_PRIMARY)
-    pdf.set_line_width(0.8)
+    pdf.set_line_width(0.6)
     pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
-    pdf.ln(2)
+    pdf.ln(1)
 
-    # ── OBJETIVO ──────────────────────────────────────────────────
-    if adapted_data.get("objetivo"):
-        pdf._add_section_title("Objetivo Profissional")
+    # ── OBJECTIVE ─────────────────────────────────────────────────
+    if adapted_data.get("objetivo") and pdf._fits_page():
+        pdf._add_section_title(headers["objective"])
         pdf._add_text(adapted_data["objetivo"])
 
-    # ── EXPERIÊNCIA ───────────────────────────────────────────────
-    for exp in adapted_data.get("experiencia", []):
-        if not adapted_data.get("_exp_header_added"):
-            pdf._add_section_title("Experiência Profissional")
-            adapted_data["_exp_header_added"] = True
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.cell(0, 6, _sanitize_text(exp.get("cargo", "")), new_x="LMARGIN", new_y="NEXT")
-        info_parts = [p for p in [exp.get("empresa"), exp.get("periodo")] if p]
-        if info_parts:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(*pdf.COLOR_LIGHT)
-            pdf.cell(0, 5, _sanitize_text(" | ".join(info_parts)), new_x="LMARGIN", new_y="NEXT")
-        for item in exp.get("descricao", []):
-            pdf._add_bullet(item)
-        pdf.ln(2)
+    # ── EXPERIENCE ────────────────────────────────────────────────
+    exps = adapted_data.get("experiencia", [])[:3]
+    if exps and pdf._fits_page():
+        pdf._add_section_title(headers["experience"])
+        for exp in exps:
+            if not pdf._fits_page():
+                break
+            pdf.set_font("Helvetica", "B", 8.5)
+            pdf.set_text_color(*pdf.COLOR_SECONDARY)
+            pdf.cell(0, 5, _sanitize_text(exp.get("cargo", "")), new_x="LMARGIN", new_y="NEXT")
+            info = [p for p in [exp.get("empresa"), exp.get("periodo")] if p]
+            if info:
+                pdf.set_font("Helvetica", "I", 7.5)
+                pdf.set_text_color(*pdf.COLOR_LIGHT)
+                pdf.cell(0, 4, _sanitize_text(" | ".join(info)), new_x="LMARGIN", new_y="NEXT")
+            for item in exp.get("descricao", [])[:2]:
+                pdf._add_bullet(item)
+            pdf.ln(1)
 
-    # ── FORMAÇÃO ──────────────────────────────────────────────────
-    for edu in adapted_data.get("formacao", []):
-        if not adapted_data.get("_edu_header_added"):
-            pdf._add_section_title("Formação Acadêmica")
-            adapted_data["_edu_header_added"] = True
-        pdf.set_font("Helvetica", "B", 10)
-        pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.cell(0, 6, _sanitize_text(edu.get("curso", "")), new_x="LMARGIN", new_y="NEXT")
-        info_parts = [p for p in [edu.get("instituicao"), edu.get("periodo")] if p]
-        if info_parts:
-            pdf.set_font("Helvetica", "I", 9)
-            pdf.set_text_color(*pdf.COLOR_LIGHT)
-            pdf.cell(0, 5, _sanitize_text(" | ".join(info_parts)), new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(2)
+    # ── EDUCATION ─────────────────────────────────────────────────
+    edus = adapted_data.get("formacao", [])[:2]
+    if edus and pdf._fits_page():
+        pdf._add_section_title(headers["education"])
+        for edu in edus:
+            if not pdf._fits_page():
+                break
+            pdf.set_font("Helvetica", "B", 8.5)
+            pdf.set_text_color(*pdf.COLOR_SECONDARY)
+            pdf.cell(0, 5, _sanitize_text(edu.get("curso", "")), new_x="LMARGIN", new_y="NEXT")
+            info = [p for p in [edu.get("instituicao"), edu.get("periodo")] if p]
+            if info:
+                pdf.set_font("Helvetica", "I", 7.5)
+                pdf.set_text_color(*pdf.COLOR_LIGHT)
+                pdf.cell(0, 4, _sanitize_text(" | ".join(info)), new_x="LMARGIN", new_y="NEXT")
+            pdf.ln(1)
 
-    # ── HABILIDADES TÉCNICAS ──────────────────────────────────────
-    if adapted_data.get("habilidades_tecnicas"):
-        pdf._add_section_title("Habilidades Técnicas")
-        pdf.set_font("Helvetica", "", 9)
+    # ── TECH SKILLS ───────────────────────────────────────────────
+    skills = adapted_data.get("habilidades_tecnicas", [])[:8]
+    if skills and pdf._fits_page():
+        pdf._add_section_title(headers["tech_skills"])
+        pdf.set_font("Helvetica", "", 7.5)
         pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.multi_cell(0, 5, _sanitize_text("  -  ".join(adapted_data["habilidades_tecnicas"])))
+        pdf.multi_cell(0, 4, _sanitize_text("  •  ".join(skills)))
 
-    # ── HABILIDADES COMPORTAMENTAIS ───────────────────────────────
-    if adapted_data.get("habilidades_comportamentais"):
-        pdf._add_section_title("Habilidades Comportamentais")
-        pdf.set_font("Helvetica", "", 9)
+    # ── SOFT SKILLS ───────────────────────────────────────────────
+    soft = adapted_data.get("habilidades_comportamentais", [])[:4]
+    if soft and pdf._fits_page():
+        pdf._add_section_title(headers["soft_skills"])
+        pdf.set_font("Helvetica", "", 7.5)
         pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.multi_cell(0, 5, _sanitize_text("  -  ".join(adapted_data["habilidades_comportamentais"])))
+        pdf.multi_cell(0, 4, _sanitize_text("  •  ".join(soft)))
 
-    # ── PROJETOS ──────────────────────────────────────────────────
-    for proj in adapted_data.get("projetos", []):
-        if not adapted_data.get("_proj_header_added"):
-            pdf._add_section_title("Projetos")
-            adapted_data["_proj_header_added"] = True
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.cell(0, 5, _sanitize_text(proj.get("nome", "")), new_x="LMARGIN", new_y="NEXT")
-        if proj.get("descricao"):
-            pdf._add_text(proj["descricao"], size=8, color=pdf.COLOR_LIGHT)
-        pdf.ln(1)
+    # ── PROJECTS (only if space) ──────────────────────────────────
+    projs = adapted_data.get("projetos", [])[:2]
+    if projs and pdf._fits_page():
+        pdf._add_section_title(headers["projects"])
+        for proj in projs:
+            if not pdf._fits_page():
+                break
+            pdf.set_font("Helvetica", "B", 7.5)
+            pdf.set_text_color(*pdf.COLOR_SECONDARY)
+            pdf.cell(0, 4, _sanitize_text(proj.get("nome", "")), new_x="LMARGIN", new_y="NEXT")
+            if proj.get("descricao"):
+                pdf._add_text(proj["descricao"], size=7, color=pdf.COLOR_LIGHT)
 
-    # ── CERTIFICAÇÕES ─────────────────────────────────────────────
-    if adapted_data.get("certificacoes"):
-        pdf._add_section_title("Certificações")
-        for cert in adapted_data["certificacoes"]:
+    # ── CERTIFICATIONS (only if space) ────────────────────────────
+    certs = adapted_data.get("certificacoes", [])[:3]
+    if certs and pdf._fits_page():
+        pdf._add_section_title(headers["certifications"])
+        for cert in certs:
+            if not pdf._fits_page():
+                break
             pdf._add_bullet(cert)
 
-    # ── IDIOMAS ───────────────────────────────────────────────────
-    if adapted_data.get("idiomas"):
-        pdf._add_section_title("Idiomas")
-        pdf.set_font("Helvetica", "", 9)
+    # ── LANGUAGES ─────────────────────────────────────────────────
+    langs = adapted_data.get("idiomas", [])
+    if langs and pdf._fits_page():
+        pdf._add_section_title(headers["languages"])
+        pdf.set_font("Helvetica", "", 7.5)
         pdf.set_text_color(*pdf.COLOR_SECONDARY)
-        pdf.multi_cell(0, 5, _sanitize_text("  -  ".join(adapted_data["idiomas"])))
-
+        pdf.multi_cell(0, 4, _sanitize_text("  •  ".join(langs)))
 
     try:
         pdf.output(filepath)
-        print(f"  ✅ PDF gerado: {filename}")
+        print(f"  ✅ PDF gerado (1 página): {filename}")
         return filepath
     except Exception as e:
         print(f"  ✗ Erro ao salvar PDF: {e}")
@@ -350,11 +423,10 @@ def generate_resume_pdf(adapted_data: dict, job: dict, candidate_name: str) -> s
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  GERADOR DE DOCX
+#  GERADOR DE DOCX (1 página, compacto)
 # ═══════════════════════════════════════════════════════════════════════
 
-def generate_resume_docx(adapted_data: dict, job: dict, candidate_name: str) -> str:
-    """Gera um DOCX de currículo profissional. Retorna caminho do arquivo."""
+def generate_resume_docx(adapted_data, job, candidate_name):
     _ensure_output_dir()
 
     empresa_slug = re.sub(r"[^\w]", "_", job.get("empresa", "empresa"))[:30]
@@ -362,124 +434,138 @@ def generate_resume_docx(adapted_data: dict, job: dict, candidate_name: str) -> 
     filename = f"CV_{candidate_name.replace(' ', '_')}_{empresa_slug}_{vaga_slug}.docx"
     filepath = os.path.join(OUTPUT_DIR, filename)
 
+    lang = adapted_data.get("_lang", "pt")
+    headers = _get_headers(lang)
+
     doc = Document()
 
-    # Margens
     for section in doc.sections:
-        section.top_margin = Cm(1.5)
-        section.bottom_margin = Cm(1.5)
-        section.left_margin = Cm(2)
-        section.right_margin = Cm(2)
+        section.top_margin = Cm(1.0)
+        section.bottom_margin = Cm(1.0)
+        section.left_margin = Cm(1.5)
+        section.right_margin = Cm(1.5)
 
-    def _add_heading(text: str, level: int = 1):
+    def _add_heading(text, level=1):
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER if level == 1 else WD_ALIGN_PARAGRAPH.LEFT
         run = p.add_run(text)
         run.bold = True
-        run.font.size = Pt(18 if level == 1 else 11)
+        run.font.size = Pt(14 if level == 1 else 9)
         r, g, b = COLOR_PRIMARY if level <= 2 else COLOR_SECONDARY
         run.font.color.rgb = RGBColor(r, g, b)
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.space_before = Pt(0)
         return p
 
-    def _add_section(title: str):
+    def _add_section(title):
         p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(4)
+        p.paragraph_format.space_after = Pt(1)
         run = p.add_run(title.upper())
         run.bold = True
-        run.font.size = Pt(10)
-        r, g, b = COLOR_PRIMARY
-        run.font.color.rgb = RGBColor(r, g, b)
-        doc.add_paragraph("─" * 60).runs[0].font.color.rgb = RGBColor(*COLOR_ACCENT)
+        run.font.size = Pt(9)
+        run.font.color.rgb = RGBColor(*COLOR_PRIMARY)
 
-    def _add_body(text: str, italic: bool = False, size: int = 9):
+    def _add_body(text, italic=False, size=8):
         p = doc.add_paragraph(text)
+        p.paragraph_format.space_after = Pt(1)
+        p.paragraph_format.space_before = Pt(0)
         for run in p.runs:
             run.italic = italic
             run.font.size = Pt(size)
             run.font.color.rgb = RGBColor(*COLOR_SECONDARY)
         return p
 
-    # Nome
     _add_heading(adapted_data.get("nome", candidate_name))
 
-    # Contato
-    contato = [adapted_data.get("email", ""), adapted_data.get("telefone", ""),
-               adapted_data.get("localizacao", "")]
-    contato = [c for c in contato if c]
+    contato = [c for c in [adapted_data.get("email", ""), adapted_data.get("telefone", ""),
+               adapted_data.get("localizacao", "")] if c]
     if contato:
         p = doc.add_paragraph("  |  ".join(contato))
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(1)
         for run in p.runs:
-            run.font.size = Pt(9)
+            run.font.size = Pt(8)
             run.font.color.rgb = RGBColor(*COLOR_LIGHT)
 
     if adapted_data.get("linkedin"):
         p = doc.add_paragraph(adapted_data["linkedin"])
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p.paragraph_format.space_after = Pt(2)
         for run in p.runs:
-            run.font.size = Pt(8)
+            run.font.size = Pt(7)
             run.font.color.rgb = RGBColor(*COLOR_ACCENT)
 
-    # Objetivo
     if adapted_data.get("objetivo"):
-        _add_section("Objetivo Profissional")
+        _add_section(headers["objective"])
         _add_body(adapted_data["objetivo"])
 
-    # Experiência
-    if adapted_data.get("experiencia"):
-        _add_section("Experiência Profissional")
-        for exp in adapted_data["experiencia"]:
+    exps = adapted_data.get("experiencia", [])[:3]
+    if exps:
+        _add_section(headers["experience"])
+        for exp in exps:
             p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(0)
             run = p.add_run(exp.get("cargo", ""))
             run.bold = True
-            run.font.size = Pt(10)
+            run.font.size = Pt(9)
             info = " | ".join(filter(None, [exp.get("empresa"), exp.get("periodo")]))
             if info:
-                _add_body(info, italic=True)
-            for item in exp.get("descricao", []):
-                doc.add_paragraph(f"• {item}", style="List Bullet")
+                _add_body(info, italic=True, size=7)
+            for item in exp.get("descricao", [])[:2]:
+                bp = doc.add_paragraph(f"• {item}")
+                bp.paragraph_format.space_after = Pt(0)
+                bp.paragraph_format.left_indent = Cm(0.5)
+                for run in bp.runs:
+                    run.font.size = Pt(7.5)
 
-    # Formação
-    if adapted_data.get("formacao"):
-        _add_section("Formação Acadêmica")
-        for edu in adapted_data["formacao"]:
+    edus = adapted_data.get("formacao", [])[:2]
+    if edus:
+        _add_section(headers["education"])
+        for edu in edus:
             p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(0)
             run = p.add_run(edu.get("curso", ""))
             run.bold = True
-            run.font.size = Pt(10)
+            run.font.size = Pt(9)
             info = " | ".join(filter(None, [edu.get("instituicao"), edu.get("periodo")]))
             if info:
-                _add_body(info, italic=True)
+                _add_body(info, italic=True, size=7)
 
-    # Habilidades técnicas
-    if adapted_data.get("habilidades_tecnicas"):
-        _add_section("Habilidades Técnicas")
-        _add_body("  •  ".join(adapted_data["habilidades_tecnicas"]))
+    skills = adapted_data.get("habilidades_tecnicas", [])[:8]
+    if skills:
+        _add_section(headers["tech_skills"])
+        _add_body("  •  ".join(skills), size=7.5)
 
-    # Projetos
-    if adapted_data.get("projetos"):
-        _add_section("Projetos")
-        for proj in adapted_data["projetos"]:
+    projs = adapted_data.get("projetos", [])[:2]
+    if projs:
+        _add_section(headers["projects"])
+        for proj in projs:
             p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(0)
             run = p.add_run(proj.get("nome", ""))
             run.bold = True
-            run.font.size = Pt(9)
+            run.font.size = Pt(8)
             if proj.get("descricao"):
-                _add_body(proj["descricao"], size=8)
+                _add_body(proj["descricao"], size=7)
 
-    # Certificações
-    if adapted_data.get("certificacoes"):
-        _add_section("Certificações")
-        for cert in adapted_data["certificacoes"]:
-            doc.add_paragraph(f"• {cert}")
+    certs = adapted_data.get("certificacoes", [])[:3]
+    if certs:
+        _add_section(headers["certifications"])
+        for cert in certs:
+            bp = doc.add_paragraph(f"• {cert}")
+            bp.paragraph_format.space_after = Pt(0)
+            for run in bp.runs:
+                run.font.size = Pt(7.5)
 
-    # Idiomas
-    if adapted_data.get("idiomas"):
-        _add_section("Idiomas")
-        _add_body("  •  ".join(adapted_data["idiomas"]))
+    langs = adapted_data.get("idiomas", [])
+    if langs:
+        _add_section(headers["languages"])
+        _add_body("  •  ".join(langs), size=7.5)
 
     try:
         doc.save(filepath)
-        print(f"  ✅ DOCX gerado: {filename}")
+        print(f"  ✅ DOCX gerado (1 página): {filename}")
         return filepath
     except Exception as e:
         print(f"  ✗ Erro ao salvar DOCX: {e}")

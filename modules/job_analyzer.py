@@ -11,6 +11,7 @@ import time
 
 import google.generativeai as genai
 from dotenv import load_dotenv
+from .metrics import inc_rate_limit, inc_call
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 load_dotenv(os.path.join(BASE_DIR, "config.env"))
@@ -33,11 +34,13 @@ def _call_gemini(prompt: str, retries: int = 3) -> str:
     while True:
         try:
             response = model.generate_content(prompt)
+            inc_call()
             return response.text
         except Exception as e:
             error_msg = str(e).lower()
             if "quota" in error_msg or "rate" in error_msg or "429" in error_msg:
-                print(f"  ⏳ Rate limit/Cota da API atingida. Ativando fallback de currículo...")
+                print("  ⏳ Rate limit/Cota da API atingida. Ativando fallback de currículo...")
+                inc_rate_limit()
                 return "__RATE_LIMIT__"
             elif "api_key_invalid" in error_msg or "invalid" in error_msg:
                 print("  ✗ Chave de API Gemini inválida!")

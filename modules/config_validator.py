@@ -73,7 +73,7 @@ def _check_smtp() -> tuple[bool, str]:
 
 def _check_resume() -> tuple[bool, str]:
     """Verifica se o currículo PDF existe."""
-    pdf_name = os.getenv("RESUME_PDF", "Curriculo_Paulo_Net0.pdf")
+    pdf_name = os.getenv("RESUME_PDF", "Curriculo-PauloNeto.pdf")
     path = os.path.join(BASE_DIR, pdf_name)
     if os.path.exists(path):
         size_kb = os.path.getsize(path) // 1024

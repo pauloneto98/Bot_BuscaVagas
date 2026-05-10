@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bot Busca Vagas — Painel de Controle</title>
+    <meta name="description" content="Dashboard inteligente para automação de candidaturas a vagas de emprego.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+
+<!-- ═══ SIDEBAR ═══ -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="logo">
+            <span class="logo-icon">🤖</span>
+            <div>
+                <h1>BuscaVagas</h1>
+                <span class="logo-subtitle">Painel de Controle</span>
+            </div>
+        </div>
+    </div>
+
+    <nav class="sidebar-nav">
+        <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
+            <span class="nav-icon">📊</span>
+            <span>Dashboard</span>
+        </button>
+        <button class="nav-item" data-page="control" id="nav-control">
+            <span class="nav-icon">🚀</span>
+            <span>Controle do Bot</span>
+        </button>
+        <button class="nav-item" data-page="jobs" id="nav-jobs">
+            <span class="nav-icon">📋</span>
+            <span>Candidaturas</span>
+        </button>
+        <button class="nav-item" data-page="settings" id="nav-settings">
+            <span class="nav-icon">⚙️</span>
+            <span>Configurações</span>
+        </button>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="bot-status" id="bot-status-indicator">
+            <span class="status-dot idle"></span>
+            <span>Bot Inativo</span>
+        </div>
+    </div>
+</aside>
+
+<!-- ═══ MAIN CONTENT ═══ -->
+<main class="main-content">
+
+    <!-- ── DASHBOARD PAGE ── -->
+    <section class="page active" id="page-dashboard">
+        <div class="page-header">
+            <h2>Dashboard</h2>
+            <span class="page-subtitle" id="dashboard-date"></span>
+        </div>
+
+        <!-- KPI Cards -->
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">📧</div>
+                <div class="kpi-content">
+                    <span class="kpi-value" id="kpi-emails">0</span>
+                    <span class="kpi-label">Emails Enviados</span>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background: linear-gradient(135deg, #06b6d4, #3b82f6);">🔍</div>
+                <div class="kpi-content">
+                    <span class="kpi-value" id="kpi-total">0</span>
+                    <span class="kpi-label">Vagas Processadas</span>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">📅</div>
+                <div class="kpi-content">
+                    <span class="kpi-value" id="kpi-today">0</span>
+                    <span class="kpi-label">Hoje</span>
+                </div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-icon" style="background: linear-gradient(135deg, #f59e0b, #ef4444);">🤖</div>
+                <div class="kpi-content">
+                    <span class="kpi-value" id="kpi-api">0</span>
+                    <span class="kpi-label">Chamadas Gemini</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+            <div class="chart-card">
+                <h3>Candidaturas por Dia</h3>
+                <canvas id="chart-daily"></canvas>
+            </div>
+            <div class="chart-card">
+                <h3>Top Empresas</h3>
+                <canvas id="chart-companies"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── CONTROL PAGE ── -->
+    <section class="page" id="page-control">
+        <div class="page-header">
+            <h2>Controle do Bot</h2>
+            <span class="page-subtitle">Inicie, pare e monitore a execução em tempo real</span>
+        </div>
+
+        <div class="control-grid">
+            <!-- Launch Panel -->
+            <div class="control-card launch-card">
+                <h3>Iniciar Busca</h3>
+                <div class="mode-selector">
+                    <label class="mode-option">
+                        <input type="radio" name="bot-mode" value="full" checked>
+                        <div class="mode-box">
+                            <span class="mode-icon">🌐</span>
+                            <span class="mode-title">Completo</span>
+                            <span class="mode-desc">Busca + Manuais</span>
+                        </div>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="bot-mode" value="manual">
+                        <div class="mode-box">
+                            <span class="mode-icon">📋</span>
+                            <span class="mode-title">Manual</span>
+                            <span class="mode-desc">Apenas JSON</span>
+                        </div>
+                    </label>
+                    <label class="mode-option">
+                        <input type="radio" name="bot-mode" value="teste">
+                        <div class="mode-box">
+                            <span class="mode-icon">🧪</span>
+                            <span class="mode-title">Teste</span>
+                            <span class="mode-desc">Sem enviar email</span>
+                        </div>
+                    </label>
+                </div>
+                <div class="control-buttons">
+                    <button class="btn btn-start" id="btn-start">
+                        <span>▶ INICIAR CAÇADA</span>
+                    </button>
+                    <button class="btn btn-stop" id="btn-stop" disabled>
+                        <span>⏹ PARAR</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Live Terminal -->
+            <div class="control-card terminal-card">
+                <div class="terminal-header">
+                    <span class="terminal-dot red"></span>
+                    <span class="terminal-dot yellow"></span>
+                    <span class="terminal-dot green"></span>
+                    <span class="terminal-title">Terminal ao Vivo</span>
+                </div>
+                <pre class="terminal-body" id="terminal-output">Aguardando iniciar o bot...</pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── JOBS PAGE ── -->
+    <section class="page" id="page-jobs">
+        <div class="page-header">
+            <h2>Histórico de Candidaturas</h2>
+            <span class="page-subtitle" id="jobs-count">0 registros</span>
+        </div>
+
+        <div class="jobs-table-wrapper">
+            <table class="jobs-table" id="jobs-table">
+                <thead>
+                    <tr>
+                        <th>Data</th>
+                        <th>Empresa</th>
+                        <th>Vaga</th>
+                        <th>Email</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody id="jobs-tbody">
+                    <tr><td colspan="5" class="empty-state">Carregando...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <!-- ── SETTINGS PAGE ── -->
+    <section class="page" id="page-settings">
+        <div class="page-header">
+            <h2>Configurações</h2>
+            <span class="page-subtitle">Gerencie API, email, currículo e filtros de busca</span>
+        </div>
+
+        <div class="settings-grid">
+            <!-- API & Email -->
+            <div class="settings-card">
+                <h3>🔑 API & Credenciais</h3>
+                <div class="form-group">
+                    <label for="cfg-api-key">Chave da API Gemini</label>
+                    <input type="password" id="cfg-api-key" placeholder="AIza...">
+                    <button class="btn-eye" onclick="togglePassword('cfg-api-key', this)">👁</button>
+                </div>
+                <div class="form-group">
+                    <label for="cfg-email">Email de Envio (Gmail)</label>
+                    <input type="email" id="cfg-email" placeholder="seu@gmail.com">
+                </div>
+                <div class="form-group">
+                    <label for="cfg-password">Senha de App</label>
+                    <input type="password" id="cfg-password" placeholder="abcdefghijklmnop">
+                    <button class="btn-eye" onclick="togglePassword('cfg-password', this)">👁</button>
+                </div>
+                <div class="form-group">
+                    <label for="cfg-cc">Email CC (opcional)</label>
+                    <input type="email" id="cfg-cc" placeholder="copia@email.com">
+                </div>
+            </div>
+
+            <!-- Candidate Info -->
+            <div class="settings-card">
+                <h3>👤 Dados do Candidato</h3>
+                <div class="form-group">
+                    <label for="cfg-name">Nome Completo</label>
+                    <input type="text" id="cfg-name" placeholder="Paulo Antonio do Nascimento Neto">
+                </div>
+                <div class="form-group">
+                    <label for="cfg-resume">Currículo Base (PDF)</label>
+                    <div class="upload-zone" id="upload-zone">
+                        <span class="upload-icon">📄</span>
+                        <span class="upload-text" id="upload-text">Arraste o PDF ou clique aqui</span>
+                        <input type="file" id="resume-file" accept=".pdf" hidden>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Filters -->
+            <div class="settings-card">
+                <h3>🔍 Filtros de Busca</h3>
+                <div class="form-group">
+                    <label for="cfg-max-jobs">Máx. vagas por categoria</label>
+                    <input type="number" id="cfg-max-jobs" min="1" max="50" value="10">
+                </div>
+                <div class="toggle-group">
+                    <label class="toggle-label">
+                        <span>Buscar vagas presenciais (Recife, Olinda, Jaboatão, Cabo)</span>
+                        <input type="checkbox" id="cfg-presencial" class="toggle-input">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="toggle-group">
+                    <label class="toggle-label">
+                        <span>Buscar vagas em Portugal</span>
+                        <input type="checkbox" id="cfg-portugal" class="toggle-input">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Delays -->
+            <div class="settings-card">
+                <h3>⏱ Delays de Requisição</h3>
+                <div class="form-group">
+                    <label for="cfg-delay-min">Delay Mínimo (segundos)</label>
+                    <input type="number" id="cfg-delay-min" step="0.5" min="0.5" value="2">
+                </div>
+                <div class="form-group">
+                    <label for="cfg-delay-max">Delay Máximo (segundos)</label>
+                    <input type="number" id="cfg-delay-max" step="0.5" min="1" value="5">
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-actions">
+            <button class="btn btn-save" id="btn-save-config">💾 Salvar Configurações</button>
+            <span class="save-feedback" id="save-feedback"></span>
+        </div>
+    </section>
+
+</main>
+
+<!-- Toast Notification -->
+<div class="toast-container" id="toast-container"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

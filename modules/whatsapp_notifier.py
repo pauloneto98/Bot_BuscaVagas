@@ -5,8 +5,6 @@ Mantém a sessão salva para não precisar escanear o QR Code toda vez.
 """
 import os
 import sys
-import time
-import urllib.parse
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")

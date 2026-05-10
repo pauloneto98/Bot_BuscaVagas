@@ -137,9 +137,12 @@ def find_company_email(company_name: str) -> dict:
 
     # Queries prioritárias: foco em RH, vagas e recrutamento
     hr_queries = [
-        f'"{company_name}" email RH vagas recrutamento site:br',
-        f'"{company_name}" contato recrutamento curriculo',
-        f'"{company_name}" careers jobs email contact',  # fallback internacional
+        f'"{company_name}" email rh vagas site:br',
+        f'"{company_name}" curriculo vagas contato',
+        f'"{company_name}" vagas.com.br contato',
+        f'"{company_name}" indeed.com contato',
+        f'"{company_name}" linkedin vagas email',
+        f'"{company_name}" trabalhos contato email',
     ]
 
     # ── Etapa 1: Busca focada em RH/vagas ─────────────────────────
@@ -181,10 +184,12 @@ def find_company_email(company_name: str) -> dict:
 
     # ── Etapa 3: Fallback — busca qualquer email da empresa ────────
     if not all_emails:
-        print(f"  🔄 Buscando qualquer email disponível para {company_name}...")
+        print(f"  🔄 Buscando por vagas.com.br e indeed...")
         fallback_queries = [
-            f'"{company_name}" email contato',
-            f'"{company_name}" "@" site',
+            f'"{company_name}" vagas.com.br contato',
+            f'"{company_name}" indeed.com.br contato',
+            f'"{company_name}" wellfound.com contato',
+            f'"{company_name}" careers contact email',
         ]
         for query in fallback_queries:
             _random_delay(0.3, 0.7)

@@ -23,7 +23,7 @@ load_dotenv(os.path.join(BASE_DIR, "config.env"))
 EMAIL_ADDRESS     = os.getenv("EMAIL_ADDRESS", "")
 EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
 EMAIL_CC          = os.getenv("EMAIL_CC", "")
-CANDIDATE_NAME    = os.getenv("CANDIDATE_NAME", "Paulo Neto")
+CANDIDATE_NAME    = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
 
 _EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
