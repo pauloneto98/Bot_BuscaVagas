@@ -40,10 +40,29 @@ from modules.logger import (
     load_history, log_application, save_history
 )
 from modules.metrics import export_metrics, inc_fallback
+from modules.database import get_pending_leads, update_lead_status_by_email
 from modules.resume_adapter import (
     adapt_resume_and_analyze, extract_resume_text,
     generate_resume_docx, generate_resume_pdf, is_international_job
 )
+
+_RESUME_CACHE_FILE = os.path.join(BASE_DIR, "data", "resume_cache.json")
+
+def load_resume_cache():
+    if os.path.exists(_RESUME_CACHE_FILE):
+        try:
+            with open(_RESUME_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_resume_cache(cache):
+    try:
+        with open(_RESUME_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
 if sys.platform == "win32":
     try:
@@ -128,37 +147,33 @@ def show_status():
         console.print(f"\n[dim]📁 CSV exportado em: {csv_path}[/dim]")
 
 
-def load_manual_emails() -> list[dict]:
-    """Carrega emails manuais do arquivo data/emails_tech_compilado.json."""
+def load_pending_leads_from_db() -> list[dict]:
+    """Carrega leads do banco SQLite com status 'pending'."""
+    pending = get_pending_leads()
     jobs = []
     
-    json_file = os.path.join(BASE_DIR, "data", "emails_tech_compilado.json")
-    if os.path.exists(json_file):
-        try:
-            with open(json_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                agencias = data.get("agencias_rh", [])
-                for item in agencias:
-                    email = item.get("email")
-                    empresa = item.get("nome")
-                    if not email or not empresa:
-                        continue
-                    if not re.match(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$", email):
-                        console.print(f"  [yellow]⚠ Email inválido ignorado (JSON):[/yellow] {email}")
-                        continue
-                    titulo = "Desenvolvedor de Software Junior"
-                    jobs.append({
-                        "titulo": titulo,
-                        "empresa": empresa,
-                        "local": item.get("regiao", "Brasil"),
-                        "url": "",
-                        "descricao": f"Candidatura direta/espontânea. Especialidade da empresa: {item.get('especialidade', '')}.",
-                        "fonte": "JSON Compilado",
-                        "email_direto": email,
-                    })
-        except Exception as e:
-            console.print(f"  [yellow]⚠ Erro ao ler JSON {json_file}: {e}[/yellow]")
+    for lead in pending:
+        # Pular se e-mail não for válido ou empresa vazia
+        email = lead.get("email")
+        empresa = lead.get("empresa")
+        if not email or not empresa:
+            continue
             
+        titulo = lead.get("cargo_da_vaga", "Desenvolvedor de Software")
+        if not titulo:
+            titulo = "Desenvolvedor de Software"
+            
+        jobs.append({
+            "titulo": titulo,
+            "empresa": empresa,
+            "local": "Brasil/Remoto",
+            "url": lead.get("site", ""),
+            "descricao": f"Candidatura direta. Fonte: {lead.get('fonte', 'Banco de Dados')}",
+            "fonte": "SQLite",
+            "email_direto": email,
+            "id_lead": lead.get("id") # Guardar para referenciar depois se necessário
+        })
+        
     return jobs
 
 
@@ -205,18 +220,17 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
             "fonte": "Teste",
         }]
     elif manual_only:
-        console.print("\n[bold cyan]📋 MODO MANUAL:[/bold cyan] Processando emails de data/emails_tech_compilado.json")
-        jobs = load_manual_emails()
+        console.print("\n[bold cyan]📋 MODO MANUAL:[/bold cyan] Processando apenas leads pendentes do banco de dados")
+        jobs = load_pending_leads_from_db()
         if not jobs:
-            console.print("[yellow]⚠ Nenhum email manual encontrado.[/yellow]")
-            console.print(f"[dim]  Verifique o arquivo JSON de emails manuais.[/dim]")
+            console.print("[yellow]⚠ Nenhum lead pendente no banco de dados.[/yellow]")
             return
-        console.print(f"  [green]✅[/green] {len(jobs)} candidatura(s) manual(is) carregada(s)")
+        console.print(f"  [green]✅[/green] {len(jobs)} lead(s) carregado(s)")
     else:
-        # Carregar manuais + buscados automaticamente
-        manual_jobs = load_manual_emails()
+        # Carregar leads pendentes + buscados automaticamente
+        manual_jobs = load_pending_leads_from_db()
         if manual_jobs:
-            console.print(f"\n[bold cyan]📋 {len(manual_jobs)} email(s) manual(is) carregado(s)[/bold cyan]")
+            console.print(f"\n[bold cyan]📋 {len(manual_jobs)} lead(s) pendente(s) do banco de dados carregado(s)[/bold cyan]")
         auto_jobs = search_all_jobs()
         jobs = manual_jobs + auto_jobs
 
@@ -227,6 +241,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
     # 5. Processar vagas
     applied_count = skipped_count = error_count = 0
     applied_set = build_applied_set(history)
+    resume_cache = load_resume_cache()
 
     console.print(f"\n[bold cyan]🚀 Processando {len(jobs)} vagas...[/bold cyan]")
 
@@ -245,57 +260,73 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
             continue
 
         try:
-            # 5. Analisar e Adaptar (CHAMADA ÚNICA)
-            adapted, analysis = adapt_resume_and_analyze(resume_text, job)
+            vaga_slug = re.sub(r"[^\w]", "_", job.get('titulo', 'vaga'))[:30].lower()
             
-            pdf_path = ""
-            if adapted and adapted.get("_rate_limit_fallback"):
-                console.print("  [yellow]⚠ Rate Limit: Procurando currículo fallback (genérico da vaga)...[/yellow]")
-                inc_fallback()
-                vaga_slug = re.sub(r"[^\w]", "_", job.get('titulo', 'vaga'))[:30]
-                curriculos_dir = os.path.join(BASE_DIR, "data", "curriculos")
-                os.makedirs(curriculos_dir, exist_ok=True)
+            # 5. Pesquisar email da empresa primeiro (para decidir se usa IA)
+            company_email = ""
+            if job.get("email_direto"):
+                company_email = job["email_direto"]
+                console.print(f"  📧 Email direto fornecido: {company_email}")
+            else:
+                company_info = find_company_email(job["empresa"])
+                company_email = company_info.get("email", "")
+
+            # Verificar configuração de Otimização de Tokens
+            personalize_only_emails = os.getenv("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true"
+            is_email_job = bool(company_email)
+            skip_ai = False
+            
+            if personalize_only_emails and not is_email_job:
+                skip_ai = True
                 
-                # Procura se já gerou um currículo para esta vaga
-                existing_pdfs = glob.glob(os.path.join(curriculos_dir, f"*_{vaga_slug}_*.pdf"))
-                if existing_pdfs:
-                    pdf_path = existing_pdfs[0]
-                    console.print(f"  [green]✅ Reutilizando currículo: {os.path.basename(pdf_path)}[/green]")
+            pdf_path = ""
+            analysis = {}
+            adapted = {}
+            
+            if skip_ai:
+                console.print("  [blue]⚡ Otimização de Tokens:[/blue] Vaga sem e-mail detectada. Usando currículo base para site/portal.")
+                pdf_path = get_resume_path()
+            else:
+                # 5b. Analisar e Adaptar (Verificando Cache primeiro)
+                if vaga_slug in resume_cache:
+                    console.print(f"  [green]🗂️  Cache: Reutilizando análise e adaptação para '{job['titulo']}'[/green]")
+                    adapted = resume_cache[vaga_slug]["adapted"]
+                    analysis = resume_cache[vaga_slug]["analysis"]
                 else:
-                    base_pdf = os.path.join(BASE_DIR, "Curriculo-PauloNeto.pdf")
+                    adapted, analysis = adapt_resume_and_analyze(resume_text, job)
+                    if adapted and not adapted.get("_rate_limit_fallback"):
+                        resume_cache[vaga_slug] = {"adapted": adapted, "analysis": analysis}
+                        save_resume_cache(resume_cache)
+                
+                if adapted and adapted.get("_rate_limit_fallback"):
+                    console.print("  [yellow]⚠ Rate Limit: Usando currículo estático original como fallback...[/yellow]")
+                    inc_fallback()
+                    base_pdf = get_resume_path()
                     if os.path.exists(base_pdf):
                         pdf_path = base_pdf
-                        console.print(f"  [green]✅ Usando currículo original como fallback (rate limit)[/green]")
+                        console.print(f"  [green]✅ Currículo original encontrado.[/green]")
                     else:
                         console.print(f"  [red]✗ Currículo original não encontrado: {base_pdf}[/red]")
-            elif not adapted:
-                console.print("  [yellow]⚠ Não foi possível adaptar o currículo.[/yellow]")
-                error_count += 1
-                log_application(history, job["empresa"], job["titulo"],
-                                job.get("url", ""), False, notas="Erro na adaptação")
-                applied_set.add((emp_key, vaga_key))
-                continue
-            else:
-                time.sleep(2)
-                # Set language for PDF/DOCX section headers
-                idioma = analysis.get("idioma_vaga", "pt-BR")
-                adapted["_lang"] = "en" if idioma.startswith("en") or is_international_job(job) else "pt"
-                # 5c. Gerar PDF e DOCX
-                pdf_path = generate_resume_pdf(adapted, job, candidate_name)
-                generate_resume_docx(adapted, job, candidate_name)
+                elif not adapted:
+                    console.print("  [yellow]⚠ Não foi possível adaptar o currículo.[/yellow]")
+                    error_count += 1
+                    log_application(history, job["empresa"], job["titulo"],
+                                    job.get("url", ""), False, notas="Erro na adaptação")
+                    applied_set.add((emp_key, vaga_key))
+                    continue
+                else:
+                    time.sleep(2)
+                    # Set language for PDF/DOCX section headers
+                    idioma = analysis.get("idioma_vaga", "pt-BR")
+                    adapted["_lang"] = "en" if idioma.startswith("en") or is_international_job(job) else "pt"
+                    # 5c. Gerar PDF e DOCX
+                    pdf_path = generate_resume_pdf(adapted, job, candidate_name)
+                    generate_resume_docx(adapted, job, candidate_name)
 
             if not pdf_path:
                 console.print("  [yellow]⚠ Erro ao gerar/encontrar PDF.[/yellow]")
                 error_count += 1
                 continue
-
-            # 5d. Pesquisar email da empresa (ou usar email manual)
-            if job.get("email_direto"):
-                company_email = job["email_direto"]
-                console.print(f"  📧 Email manual: {company_email}")
-            else:
-                company_info = find_company_email(job["empresa"])
-                company_email = company_info.get("email", "")
 
             if test_mode:
                 console.print("  [bold yellow]🧪 MODO TESTE:[/bold yellow] Email NÃO enviado")
@@ -324,8 +355,10 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                 applied_set.add((emp_key, vaga_key))
                 if success:
                     applied_count += 1
+                    update_lead_status_by_email(company_email, 'applied')
                 else:
                     error_count += 1
+                    update_lead_status_by_email(company_email, 'failed')
             else:
                 # Linkedin precisa login, então pulamos vagas do LinkedIn quando não tem email
                 if job.get("url") and "linkedin.com" in job.get("url", "").lower():
@@ -427,7 +460,7 @@ def main():
     parser.add_argument("--status",  action="store_true",
                         help="Exibe histórico de candidaturas e estatísticas")
     parser.add_argument("--manual",  action="store_true",
-                        help="Processa APENAS emails manuais do arquivo JSON")
+                        help="Processa APENAS leads pendentes do banco de dados")
     parser.add_argument("--retry-browser", action="store_true",
                         help="Tenta aplicar via navegador para vagas passadas sem email")
     args = parser.parse_args()

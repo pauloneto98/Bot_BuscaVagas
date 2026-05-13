@@ -1,16 +1,20 @@
 """
-Módulo de Logger/Histórico — v2
+Módulo de Logger/Histórico — v2 (Refatorado para SQLite)
 Registra candidaturas enviadas, evita duplicatas, exporta CSV e relatórios.
 """
 
 import csv
-import json
 import os
 from datetime import datetime, date
 
+from modules.database import (
+    insert_application,
+    get_all_applications,
+    is_already_applied as db_is_already_applied
+)
+
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
-HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 CSV_FILE = os.path.join(DATA_DIR, "candidaturas.csv")
 MD_FILE = os.path.join(DATA_DIR, "candidaturas_enviadas.md")
 
@@ -20,38 +24,28 @@ def _ensure_data_dir():
 
 
 def load_history() -> dict:
-    _ensure_data_dir()
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, IOError):
-            pass
-    return {"candidaturas": []}
+    """Função legada mantida para compatibilidade temporária."""
+    return {"candidaturas": get_all_applications()}
 
 
 def save_history(history: dict):
-    _ensure_data_dir()
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    """Função legada. Não faz nada agora que usamos SQLite."""
+    pass
 
 
-def build_applied_set(history: dict) -> set[tuple[str, str]]:
+def build_applied_set(history: dict = None) -> set[tuple[str, str]]:
     """Cria um set (O(1) lookup) com as vagas já aplicadas para busca super rápida."""
     applied = set()
-    for c in history.get("candidaturas", []):
+    apps = get_all_applications()
+    for c in apps:
         empresa = c.get("empresa", "").strip().lower()
         vaga = c.get("vaga", "").strip().lower()
         applied.add((empresa, vaga))
     return applied
 
 def is_already_applied(history: dict, empresa: str, titulo_vaga: str) -> bool:
-    """Função legada para compatibilidade, faz busca linear (O(N)). Preferir build_applied_set."""
-    for c in history.get("candidaturas", []):
-        if (c["empresa"].lower() == empresa.lower() and
-                c["vaga"].lower() == titulo_vaga.lower()):
-            return True
-    return False
+    """Verifica no banco se a vaga já foi aplicada."""
+    return db_is_already_applied(empresa, titulo_vaga)
 
 
 def log_application(
@@ -64,7 +58,7 @@ def log_application(
     curriculo_path: str = "",
     notas: str = "",
 ) -> dict:
-    """Registra uma nova candidatura no histórico."""
+    """Registra uma nova candidatura no histórico (Banco de Dados)."""
     entry = {
         "data": datetime.now().strftime("%Y-%m-%d %H:%M"),
         "empresa": empresa,
@@ -72,11 +66,15 @@ def log_application(
         "url": url,
         "email_enviado": email_enviado,
         "email_destino": email_destino,
-        "curriculo_gerado": curriculo_path,
+        "curriculo_path": curriculo_path,
         "notas": notas,
     }
-    history["candidaturas"].append(entry)
-    save_history(history)
+    
+    insert_application(entry)
+    
+    if "candidaturas" in history:
+        history["candidaturas"].append(entry)
+        
     _append_csv(entry)
     _append_md(entry)
     return entry
@@ -89,7 +87,7 @@ def _append_csv(entry: dict):
     with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "data", "empresa", "vaga", "url",
-            "email_enviado", "email_destino", "curriculo_gerado", "notas",
+            "email_enviado", "email_destino", "curriculo_path", "notas",
         ])
         if not file_exists:
             writer.writeheader()
@@ -110,19 +108,18 @@ def _append_md(entry: dict):
             f.write("| Data | Empresa | Vaga | Email de Destino | Arquivo CV |\n")
             f.write("|------|---------|------|------------------|------------|\n")
             
-        cv_name = os.path.basename(entry.get('curriculo_gerado', ''))
+        cv_name = os.path.basename(entry.get('curriculo_path', ''))
         f.write(f"| {entry['data']} | **{entry['empresa']}** | {entry['vaga']} | `{entry.get('email_destino', '')}` | `{cv_name}` |\n")
 
 
-def get_stats(history: dict) -> dict:
-    """Retorna estatísticas gerais das candidaturas."""
-    candidaturas = history.get("candidaturas", [])
+def get_stats(history: dict = None) -> dict:
+    """Retorna estatísticas gerais das candidaturas direto do banco."""
+    candidaturas = get_all_applications()
     total = len(candidaturas)
     enviados = sum(1 for c in candidaturas if c.get("email_enviado"))
     hoje = date.today().strftime("%Y-%m-%d")
-    hoje_count = sum(1 for c in candidaturas if c.get("data", "").startswith(hoje))
+    hoje_count = sum(1 for c in candidaturas if str(c.get("data", "")).startswith(hoje))
 
-    # Por fonte (se disponível no campo notas ou url)
     por_empresa: dict[str, int] = {}
     for c in candidaturas:
         emp = c.get("empresa", "Desconhecida")
@@ -137,9 +134,10 @@ def get_stats(history: dict) -> dict:
     }
 
 
-def get_recent(history: dict, n: int = 10) -> list[dict]:
+def get_recent(history: dict = None, n: int = 10) -> list[dict]:
     """Retorna as N candidaturas mais recentes."""
-    return list(reversed(history.get("candidaturas", [])))[:n]
+    apps = get_all_applications()
+    return list(reversed(apps))[:n]
 
 
 def export_csv() -> str:

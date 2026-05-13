@@ -1,23 +1,21 @@
 """
 Módulo para automação de candidaturas via navegador usando Playwright.
-Tenta preencher formulários básicos. Se for barrado (ex: Gupy, Workday ou erro no script),
-aciona o módulo do WhatsApp para notificar o usuário.
+Tenta preencher formulários básicos.
 """
 import os
 import time
 from playwright.sync_api import sync_playwright
-from .whatsapp_notifier import send_whatsapp_alert
-
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 BROWSER_PROFILE_DIR = os.path.join(DATA_DIR, "browser_profile")
 
-WHATSAPP_NUMBER = "5581982198599" # Número do Paulo Neto fornecido
+from dotenv import load_dotenv
+
+load_dotenv(os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.env"))
 
 def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool:
     """
-    Tenta aplicar via navegador. Se for um site muito complexo ou falhar,
-    chama o send_whatsapp_alert e retorna False.
+    Tenta aplicar via navegador.
     Retorna True apenas se o script confirmar que aplicou com sucesso.
     """
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
@@ -49,7 +47,6 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
             except Exception as e:
                 print(f"  ⚠ [Navegador] Falha ao carregar a página: {e}")
                 browser.close()
-                _trigger_whatsapp(job_url, curriculo_path, job_info)
                 return False
 
             # Para LinkedIn: aguarda login antes de continuar
@@ -65,9 +62,8 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
                     print("  ✅ [LinkedIn] Sessão autenticada ou botão de candidatar visível!")
                     time.sleep(2)
                 except Exception:
-                    print("  ⚠ [LinkedIn] Timeout de 2 minutos aguardando login. Acionando WhatsApp.")
+                    print("  ⚠ [LinkedIn] Timeout de 2 minutos aguardando login. Abortando.")
                     browser.close()
-                    _trigger_whatsapp(job_url, curriculo_path, job_info)
                     return False
                     
                 # Tenta o Easy Apply do LinkedIn
@@ -101,16 +97,14 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
                                 break  # Não achou botão de avançar, para
                                 
                         if not success:
-                            print("  ⚠ [LinkedIn] Não conseguiu completar o Easy Apply. Acionando WhatsApp.")
+                            print("  ⚠ [LinkedIn] Não conseguiu completar o Easy Apply. Abortando.")
                     else:
-                        print("  ⚠ [LinkedIn] Botão Easy Apply não encontrado. Acionando WhatsApp.")
+                        print("  ⚠ [LinkedIn] Botão Easy Apply não encontrado. Abortando.")
                         
                 except Exception as e:
                     print(f"  ⚠ [LinkedIn] Erro no Easy Apply: {e}")
                     
                 browser.close()
-                if not success:
-                    _trigger_whatsapp(job_url, curriculo_path, job_info)
                 return success
                     
         
@@ -153,24 +147,4 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
         print(f"  ❌ [Navegador] Erro fatal no Playwright: {e}")
         success = False
 
-    if not success:
-        _trigger_whatsapp(job_url, curriculo_path, job_info)
-        
     return success
-
-def _trigger_whatsapp(job_url: str, curriculo_path: str, job_info: dict):
-    """Envia notificação via WhatsApp."""
-    empresa = job_info.get("empresa", "Empresa Desconhecida")
-    titulo = job_info.get("titulo", "Vaga")
-    
-    msg = (
-        f"🤖 *Bot Busca Vagas*\n"
-        f"Fui barrado ao tentar enviar o currículo pelo site!\n\n"
-        f"🏢 *Empresa:* {empresa}\n"
-        f"🎯 *Vaga:* {titulo}\n"
-        f"🔗 *Link da vaga:* {job_url}\n\n"
-        f"📎 Estou enviando o seu currículo em PDF personalizado em anexo para você mesmo aplicar manualmente."
-    )
-    
-    print("  📲 [Fallback] Acionando notificação via WhatsApp...")
-    send_whatsapp_alert(WHATSAPP_NUMBER, msg, curriculo_path)

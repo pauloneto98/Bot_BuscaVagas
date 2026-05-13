@@ -10,6 +10,7 @@ import re
 import time
 
 import google.generativeai as genai
+from groq import Groq
 from dotenv import load_dotenv
 from .metrics import inc_rate_limit, inc_call
 
@@ -18,6 +19,7 @@ load_dotenv(os.path.join(BASE_DIR, "config.env"))
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODEL_NAME = "gemini-1.5-flash"
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Cache simples em memória para evitar re-analisar mesma vaga na sessão
 _analysis_cache: dict[str, dict] = {}
@@ -52,6 +54,23 @@ def _call_gemini(prompt: str, retries: int = 3) -> str:
                     return ""
                 time.sleep(5)
     return ""
+
+
+def _call_groq(prompt: str) -> str:
+    if not GROQ_API_KEY:
+        return ""
+    try:
+        client = Groq(api_key=GROQ_API_KEY)
+        chat_completion = client.chat.completions.create(
+            messages=[{"role": "user", "content": prompt}],
+            model="llama-3.3-70b-versatile",
+            temperature=0.1,
+            max_tokens=1024,
+        )
+        return chat_completion.choices[0].message.content
+    except Exception as e:
+        print(f"  ✗ Erro Groq: {e}")
+        return ""
 
 
 def _extract_json(text: str) -> dict:
@@ -136,6 +155,12 @@ Descrição: {descricao[:2000]}"""
 
     print(f"  🤖 Analisando vaga: {job['titulo']}...")
     response_text = _call_gemini(prompt)
+
+    if response_text == "__RATE_LIMIT__":
+        print("  🦙 Rate limit do Gemini. Acionando Groq/Llama 3...")
+        response_text = _call_groq(prompt)
+        if not response_text:
+            response_text = ""
 
     result = _extract_json(response_text) if response_text else {}
     if not result:

@@ -10,31 +10,58 @@ import re
 import subprocess
 import sys
 import threading
+import secrets
 from datetime import datetime
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from fastapi import Header
+
+from modules.database import get_all_applications, get_all_leads
 
 # ── Paths ──────────────────────────────────────────────────────────
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 WEB_DIR = os.path.join(BASE_DIR, "web")
 CONFIG_FILE = os.path.join(BASE_DIR, "config.env")
-HISTORY_FILE = os.path.join(DATA_DIR, "history.json")
 METRICS_FILE = os.path.join(DATA_DIR, "metrics.json")
 LOG_FILE = os.path.join(DATA_DIR, "bot.log")
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# ── Auth ───────────────────────────────────────────────────────────
+
+_active_tokens = set()
+
+def validate_cpf(cpf: str) -> bool:
+    cpf = ''.join(filter(str.isdigit, cpf))
+    if len(cpf) != 11 or len(set(cpf)) == 1:
+        return False
+    for i in range(9, 11):
+        value = sum((int(cpf[num]) * ((i+1) - num) for num in range(0, i)))
+        digit = ((value * 10) % 11) % 10
+        if digit != int(cpf[i]):
+            return False
+    return True
+
+def verify_token(authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    token = authorization.split(" ")[1]
+    if token not in _active_tokens:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return True
+
 # ── App ────────────────────────────────────────────────────────────
-app = FastAPI(title="Bot Busca Vagas", version="3.0")
+app = FastAPI(title="Bot Busca Vagas", version="4.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -42,6 +69,11 @@ app.add_middleware(
 # ── Bot process state ─────────────────────────────────────────────
 _bot_process: subprocess.Popen | None = None
 _bot_lock = threading.Lock()
+
+# ── Hunter process state ──────────────────────────────────────────
+_hunter_process: subprocess.Popen | None = None
+_hunter_lock = threading.Lock()
+HUNTER_LOG_FILE = os.path.join(DATA_DIR, "hunter.log")
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -60,7 +92,13 @@ class ConfigPayload(BaseModel):
     search_portugal: bool = True
     request_delay_min: float = 2
     request_delay_max: float = 5
+    dashboard_password: str = "admin123"
+    personalize_only_emails: bool = True
 
+
+class LoginPayload(BaseModel):
+    cpf: str
+    password: str
 
 class BotStartPayload(BaseModel):
     mode: str = "full"  # full | teste | manual
@@ -118,7 +156,24 @@ def _write_env_file(config: dict):
         f.writelines(new_lines)
 
 
-@app.get("/api/config")
+@app.post("/api/login")
+def login(payload: LoginPayload):
+    if not validate_cpf(payload.cpf):
+        raise HTTPException(status_code=400, detail="CPF Inválido")
+    
+    env = _parse_env_file()
+    correct_password = env.get("DASHBOARD_PASSWORD", "admin123")
+    
+    if payload.password != correct_password:
+        raise HTTPException(status_code=401, detail="Senha incorreta")
+        
+    token = secrets.token_hex(32)
+    _active_tokens.add(token)
+    
+    return {"status": "ok", "token": token, "message": "Login realizado com sucesso"}
+
+
+@app.get("/api/config", dependencies=[Depends(verify_token)])
 def get_config():
     raw = _parse_env_file()
     return {
@@ -133,10 +188,12 @@ def get_config():
         "search_portugal": raw.get("SEARCH_PORTUGAL", "true").lower() == "true",
         "request_delay_min": float(raw.get("REQUEST_DELAY_MIN", "2")),
         "request_delay_max": float(raw.get("REQUEST_DELAY_MAX", "5")),
+        "dashboard_password": raw.get("DASHBOARD_PASSWORD", "admin123"),
+        "personalize_only_emails": raw.get("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true",
     }
 
 
-@app.post("/api/config")
+@app.post("/api/config", dependencies=[Depends(verify_token)])
 def save_config(payload: ConfigPayload):
     env_map = {
         "GEMINI_API_KEY": payload.gemini_api_key,
@@ -150,7 +207,11 @@ def save_config(payload: ConfigPayload):
         "SEARCH_PORTUGAL": str(payload.search_portugal).lower(),
         "REQUEST_DELAY_MIN": str(payload.request_delay_min),
         "REQUEST_DELAY_MAX": str(payload.request_delay_max),
+        "PERSONALIZE_ONLY_EMAILS": str(payload.personalize_only_emails).lower(),
     }
+    if hasattr(payload, 'dashboard_password') and payload.dashboard_password:
+        env_map["DASHBOARD_PASSWORD"] = payload.dashboard_password
+        
     _write_env_file(env_map)
     return {"status": "ok", "message": "Configurações salvas com sucesso!"}
 
@@ -159,13 +220,14 @@ def save_config(payload: ConfigPayload):
 #  RESUME UPLOAD
 # ═══════════════════════════════════════════════════════════════════
 
-@app.post("/api/upload-resume")
+@app.post("/api/upload-resume", dependencies=[Depends(verify_token)])
 async def upload_resume(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Apenas arquivos PDF são aceitos.")
 
-    # Sanitize filename
-    safe_name = re.sub(r"[^\w.\-]", "_", file.filename)
+    # Sanitize filename to prevent Path Traversal
+    basename = os.path.basename(file.filename)
+    safe_name = re.sub(r"[^\w.\-]", "_", basename)
     dest = os.path.join(BASE_DIR, safe_name)
 
     with open(dest, "wb") as f:
@@ -188,24 +250,17 @@ async def upload_resume(file: UploadFile = File(...)):
 #  STATS / DASHBOARD
 # ═══════════════════════════════════════════════════════════════════
 
-@app.get("/api/stats")
+@app.get("/api/stats", dependencies=[Depends(verify_token)])
 def get_stats():
-    # Load history
-    history = {"candidaturas": []}
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        except Exception:
-            pass
-
-    candidaturas = history.get("candidaturas", [])
+    # Carregar do banco SQLite
+    candidaturas = get_all_applications()
+    
     total = len(candidaturas)
     enviados = sum(1 for c in candidaturas if c.get("email_enviado"))
     hoje = datetime.now().strftime("%Y-%m-%d")
     hoje_count = sum(
         1 for c in candidaturas
-        if c.get("data", "").startswith(hoje)
+        if str(c.get("data", "")).startswith(hoje)
     )
 
     # Per-day counts for chart (last 30 days)
@@ -267,18 +322,11 @@ def get_stats():
     }
 
 
-@app.get("/api/jobs")
+@app.get("/api/jobs", dependencies=[Depends(verify_token)])
 def get_recent_jobs():
-    """Return recent application history."""
-    history = {"candidaturas": []}
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                history = json.load(f)
-        except Exception:
-            pass
-
-    recent = list(reversed(history.get("candidaturas", [])))[:50]
+    """Return recent application history from DB."""
+    history = get_all_applications()
+    recent = list(reversed(history))[:50]
     return {"jobs": recent}
 
 
@@ -286,7 +334,7 @@ def get_recent_jobs():
 #  BOT CONTROL
 # ═══════════════════════════════════════════════════════════════════
 
-@app.post("/api/start")
+@app.post("/api/start", dependencies=[Depends(verify_token)])
 def start_bot(payload: BotStartPayload):
     global _bot_process
     with _bot_lock:
@@ -322,7 +370,7 @@ def start_bot(payload: BotStartPayload):
         }
 
 
-@app.post("/api/stop")
+@app.post("/api/stop", dependencies=[Depends(verify_token)])
 def stop_bot():
     global _bot_process
     with _bot_lock:
@@ -333,7 +381,7 @@ def stop_bot():
         return {"status": "idle", "message": "O bot não está rodando."}
 
 
-@app.get("/api/bot-status")
+@app.get("/api/bot-status", dependencies=[Depends(verify_token)])
 def bot_status():
     global _bot_process
     with _bot_lock:
@@ -347,7 +395,7 @@ def bot_status():
             return {"running": False, "last_exit_code": code}
 
 
-@app.get("/api/logs")
+@app.get("/api/logs", dependencies=[Depends(verify_token)])
 def get_logs():
     """Return bot log contents for the live terminal."""
     if not os.path.exists(LOG_FILE):
@@ -362,6 +410,107 @@ def get_logs():
         return {"log": "\n".join(lines)}
     except Exception:
         return {"log": ""}
+
+
+# ═══════════════════════════════════════════════════════════════════
+#  EMAIL HUNTER CONTROL
+# ═══════════════════════════════════════════════════════════════════
+
+@app.post("/api/hunter/start", dependencies=[Depends(verify_token)])
+def start_hunter():
+    global _hunter_process
+    with _hunter_lock:
+        if _hunter_process and _hunter_process.poll() is None:
+            return {
+                "status": "running",
+                "message": "O Email Hunter já está em execução!",
+            }
+        with open(HUNTER_LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("")
+        cmd = [sys.executable, os.path.join(BASE_DIR, "tools", "email_hunter.py")]
+        _hunter_process = subprocess.Popen(
+            cmd,
+            stdout=open(HUNTER_LOG_FILE, "a", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            cwd=BASE_DIR,
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
+        )
+        return {
+            "status": "started",
+            "pid": _hunter_process.pid,
+            "message": "Email Hunter iniciado com sucesso!",
+        }
+
+@app.post("/api/hunter/stop", dependencies=[Depends(verify_token)])
+def stop_hunter():
+    global _hunter_process
+    with _hunter_lock:
+        if _hunter_process and _hunter_process.poll() is None:
+            _hunter_process.terminate()
+            _hunter_process = None
+            return {"status": "stopped", "message": "Email Hunter parado."}
+        return {"status": "idle", "message": "O Hunter não está rodando."}
+
+@app.get("/api/hunter/status", dependencies=[Depends(verify_token)])
+def hunter_status():
+    global _hunter_process
+    with _hunter_lock:
+        if _hunter_process is None:
+            return {"running": False}
+        if _hunter_process.poll() is None:
+            return {"running": True, "pid": _hunter_process.pid}
+        else:
+            code = _hunter_process.returncode
+            _hunter_process = None
+            return {"running": False, "last_exit_code": code}
+
+@app.get("/api/hunter/logs", dependencies=[Depends(verify_token)])
+def get_hunter_logs():
+    if not os.path.exists(HUNTER_LOG_FILE):
+        return {"log": ""}
+    try:
+        with open(HUNTER_LOG_FILE, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+        lines = content.split("\n")
+        if len(lines) > 500:
+            lines = lines[-500:]
+        return {"log": "\n".join(lines)}
+    except Exception:
+        return {"log": ""}
+
+@app.get("/api/hunter/leads", dependencies=[Depends(verify_token)])
+def get_hunter_leads():
+    leads = get_all_leads()
+    return {"leads": leads}
+
+@app.post("/api/leads/apply", dependencies=[Depends(verify_token)])
+def start_leads_application():
+    global _bot_process
+    with _bot_lock:
+        if _bot_process and _bot_process.poll() is None:
+            return {
+                "status": "running",
+                "message": "O bot já está em execução! Aguarde ele finalizar.",
+            }
+
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            f.write("Iniciando candidatura para os leads pendentes do banco...\n")
+
+        cmd = [sys.executable, os.path.join(BASE_DIR, "main.py"), "--manual"]
+
+        _bot_process = subprocess.Popen(
+            cmd,
+            stdout=open(LOG_FILE, "a", encoding="utf-8"),
+            stderr=subprocess.STDOUT,
+            cwd=BASE_DIR,
+            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        )
+
+        return {
+            "status": "started",
+            "pid": _bot_process.pid,
+            "message": "Disparo de e-mails para os leads iniciado!",
+        }
 
 
 # ═══════════════════════════════════════════════════════════════════

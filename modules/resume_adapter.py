@@ -13,7 +13,7 @@ from docx import Document
 from docx.shared import Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-from .job_analyzer import _call_gemini, _extract_json
+from .job_analyzer import _call_gemini, _extract_json, _call_groq
 
 BASE_DIR = os.path.dirname(os.path.dirname(__file__))
 OUTPUT_DIR = os.path.join(BASE_DIR, "data", "curriculos")
@@ -95,7 +95,7 @@ def extract_resume_text(pdf_path):
         return ""
 
 
-def _validate_adapted_data(data, candidate_name):
+def _validate_adapted_data(data, candidate_name, original_education=None, is_international=False):
     if not data.get("nome"):
         data["nome"] = candidate_name
     for field in ["email", "telefone", "linkedin", "localizacao", "objetivo"]:
@@ -105,7 +105,132 @@ def _validate_adapted_data(data, candidate_name):
                   "habilidades_comportamentais", "idiomas", "projetos", "certificacoes"]:
         if not isinstance(data.get(field), list):
             data[field] = []
+            
+    # Always guarantee education from the original resume
+    if original_education:
+        if not data.get("formacao"):
+            data["formacao"] = original_education
+        else:
+            # Merge: add any original entries not already present
+            existing_cursos = {e.get("curso", "").lower() for e in data["formacao"]}
+            for edu in original_education:
+                if edu.get("curso", "").lower() not in existing_cursos:
+                    data["formacao"].append(edu)
+
+    # Always guarantee Advanced English
+    eng_skill = "English (Advanced)" if is_international else "Inglês (Avançado)"
+    idiomas_lower = [i.lower() for i in data["idiomas"]]
+    if not any("inglês" in i or "ingles" in i or "english" in i for i in idiomas_lower):
+        data["idiomas"].append(eng_skill)
+        
+    # Always guarantee core technical skills
+    core_skills = ["Python", "FastAPI", "SQLAlchemy", "PostgreSQL", "Docker", "Git"]
+    existing_skills = {s.lower() for s in data["habilidades_tecnicas"]}
+    
+    # Se a IA não gerou habilidades suficientes, adicionamos as principais do candidato
+    for skill in core_skills:
+        if skill.lower() not in existing_skills:
+            data["habilidades_tecnicas"].append(skill)
+            existing_skills.add(skill.lower())
+
     return data
+
+
+def _extract_education_from_text(resume_text: str) -> list:
+    """
+    Extrai a formação acadêmica diretamente do texto bruto do currículo PDF.
+    Usa heurísticas de padrão para garantir que a formação original seja preservada.
+    """
+    education = []
+    if not resume_text:
+        return education
+
+    # Common section headers for education in PT and EN
+    section_patterns = [
+        r'forma[cç][aã]o\s+acad[eê]mica',
+        r'educa[cç][aã]o',
+        r'education',
+        r'gradua[cç][aã]o',
+        r'escolaridade',
+    ]
+    next_section_patterns = [
+        r'experi[eê]ncia',
+        r'habilidades',
+        r'skills',
+        r'projetos',
+        r'certifica[cç][oõ]es',
+        r'idiomas',
+        r'languages',
+        r'sobre mim',
+        r'objetivo',
+    ]
+
+    section_re = re.compile(
+        r'(' + '|'.join(section_patterns) + r')',
+        re.IGNORECASE
+    )
+    next_re = re.compile(
+        r'(' + '|'.join(next_section_patterns) + r')',
+        re.IGNORECASE
+    )
+
+    lines = resume_text.split('\n')
+    in_section = False
+    section_lines = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if in_section:
+                section_lines.append('')
+            continue
+        if section_re.search(stripped):
+            in_section = True
+            continue
+        if in_section:
+            # Stop when hitting another major section
+            if next_re.search(stripped) and len(stripped) < 60:
+                break
+            section_lines.append(stripped)
+
+    # Parse extracted lines into structured entries
+    # Look for course name followed by institution and date patterns
+    date_re = re.compile(r'\d{4}|jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez|present|atual|cursando', re.IGNORECASE)
+    
+    i = 0
+    while i < len(section_lines):
+        line = section_lines[i].strip()
+        if not line:
+            i += 1
+            continue
+
+        curso = line
+        instituicao = ''
+        periodo = ''
+
+        # Look ahead for institution / period
+        for j in range(i + 1, min(i + 4, len(section_lines))):
+            nxt = section_lines[j].strip()
+            if not nxt:
+                continue
+            if date_re.search(nxt):
+                if not periodo:
+                    periodo = nxt
+            elif not instituicao and nxt != curso:
+                instituicao = nxt
+
+        if curso:
+            edu_entry = {"curso": curso}
+            if instituicao:
+                edu_entry["instituicao"] = instituicao
+            if periodo:
+                edu_entry["periodo"] = periodo
+            education.append(edu_entry)
+
+        # Advance past this block
+        i += max(1, len([s for s in section_lines[i:i+4] if s.strip()]))
+
+    return education[:3]  # Keep at most 3 entries from original
 
 
 def adapt_resume_and_analyze(resume_text, job):
@@ -121,6 +246,11 @@ def adapt_resume_and_analyze(resume_text, job):
         "Identifique o idioma da vaga. O currículo adaptado DEVE ser gerado no MESMO IDIOMA da vaga."
     )
 
+    # Pre-extract education from original resume to guarantee it's always present
+    original_education = _extract_education_from_text(resume_text)
+    if original_education:
+        print(f"  📚 Formação extraída do currículo original: {len(original_education)} item(ns)")
+
     prompt = f"""Você é um especialista sênior em recrutamento e IA.
 Faça a análise desta vaga e adapte o currículo original do candidato para ela em UMA SÓ RESPOSTA.
 
@@ -131,7 +261,7 @@ REGRAS CRÍTICAS:
 4. O currículo DEVE caber em EXATAMENTE 1 PÁGINA. Para isso:
    - Objetivo: máximo 2 linhas, direto e com palavras-chave da vaga.
    - Experiência: máximo 3 posições mais relevantes, com no máximo 2 bullet points cada.
-   - Formação: máximo 2 itens.
+   - Formação: máximo 2 itens. OBRIGATÓRIO incluir a formação acadêmica do candidato.
    - Habilidades técnicas: máximo 8 skills (as mais relevantes primeiro).
    - Habilidades comportamentais: máximo 4.
    - Projetos: máximo 2 (apenas se muito relevantes, senão omita).
@@ -139,6 +269,7 @@ REGRAS CRÍTICAS:
    - Idiomas: lista compacta.
 5. Mantenha TODOS os dados de contato originais intactos.
 6. Priorize: Experiência > Habilidades Técnicas > Formação > Projetos > Certificações.
+7. NUNCA deixe o campo "formacao" vazio. Sempre copie a formação acadêmica do currículo original.
 
 CURRÍCULO ORIGINAL DO CANDIDATO:
 {resume_text[:3000]}
@@ -198,7 +329,10 @@ Retorne APENAS JSON válido sem markdown no seguinte formato:
     response_text = _call_gemini(prompt)
 
     if response_text == "__RATE_LIMIT__":
-        return {"_rate_limit_fallback": True}, {}
+        print("  🦙 Rate limit do Gemini. Acionando Groq/Llama 3 para adaptar currículo...")
+        response_text = _call_groq(prompt)
+        if not response_text or response_text == "__RATE_LIMIT__":
+            return {"_rate_limit_fallback": True}, {}
 
     if not response_text:
         print("  ⚠ Gemini não respondeu. Usando currículo base.")
@@ -217,7 +351,14 @@ Retorne APENAS JSON válido sem markdown no seguinte formato:
         analise["idioma_vaga"] = "en"
 
     candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
-    return _validate_adapted_data(curriculo, candidate_name), analise
+    validated = _validate_adapted_data(curriculo, candidate_name, original_education=original_education, is_international=international)
+
+    # Final safety net: if formacao is still empty, force original
+    if not validated.get("formacao") and original_education:
+        validated["formacao"] = original_education
+        print("  ⚠ Formação estava vazia após adaptação — restaurada do currículo original.")
+
+    return validated, analise
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -3,291 +3,530 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bot Busca Vagas — Painel de Controle</title>
-    <meta name="description" content="Dashboard inteligente para automação de candidaturas a vagas de emprego.">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-    <link rel="stylesheet" href="/static/styles.css">
+    <title>Bot Busca Vagas Premium</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f8fafc;
+            overflow-x: hidden;
+        }
+        
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .gradient-text {
+            background: linear-gradient(to right, #818cf8, #c084fc);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0f172a; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+
+        /* Toast Container */
+        #toast-container {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .toast {
+            min-width: 300px;
+            padding: 16px 20px;
+            border-radius: 12px;
+            color: white;
+            font-weight: 500;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+            animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards, fadeOut 0.3s ease-out 3.7s forwards;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .toast.success { background: linear-gradient(135deg, #059669, #10b981); }
+        .toast.error { background: linear-gradient(135deg, #e11d48, #f43f5e); }
+        .toast.info { background: linear-gradient(135deg, #2563eb, #3b82f6); }
+        
+        @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes fadeOut { from { opacity: 1; } to { opacity: 0; } }
+        
+        .fade-enter { opacity: 0; transform: translateY(10px); transition: all 0.4s ease; }
+        .fade-enter-active { opacity: 1; transform: translateY(0); }
+        
+        /* Terminal Loader */
+        .dot-flashing {
+            position: relative;
+            width: 8px; height: 8px;
+            border-radius: 5px;
+            background-color: #10b981;
+            color: #10b981;
+            animation: dot-flashing 1s infinite linear alternate;
+            animation-delay: 0.5s;
+        }
+        .dot-flashing::before, .dot-flashing::after {
+            content: '';
+            display: inline-block;
+            position: absolute;
+            top: 0;
+        }
+        .dot-flashing::before {
+            left: -15px; width: 8px; height: 8px; border-radius: 5px;
+            background-color: #10b981; color: #10b981;
+            animation: dot-flashing 1s infinite alternate;
+            animation-delay: 0s;
+        }
+        .dot-flashing::after {
+            left: 15px; width: 8px; height: 8px; border-radius: 5px;
+            background-color: #10b981; color: #10b981;
+            animation: dot-flashing 1s infinite alternate;
+            animation-delay: 1s;
+        }
+        @keyframes dot-flashing {
+            0% { background-color: #10b981; }
+            50%, 100% { background-color: rgba(16, 185, 129, 0.2); }
+        }
+    </style>
 </head>
-<body>
+<body class="antialiased selection:bg-indigo-500 selection:text-white">
 
-<!-- ═══ SIDEBAR ═══ -->
-<aside class="sidebar" id="sidebar">
-    <div class="sidebar-header">
-        <div class="logo">
-            <span class="logo-icon">🤖</span>
-            <div>
-                <h1>BuscaVagas</h1>
-                <span class="logo-subtitle">Painel de Controle</span>
-            </div>
-        </div>
-    </div>
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
 
-    <nav class="sidebar-nav">
-        <button class="nav-item active" data-page="dashboard" id="nav-dashboard">
-            <span class="nav-icon">📊</span>
-            <span>Dashboard</span>
-        </button>
-        <button class="nav-item" data-page="control" id="nav-control">
-            <span class="nav-icon">🚀</span>
-            <span>Controle do Bot</span>
-        </button>
-        <button class="nav-item" data-page="jobs" id="nav-jobs">
-            <span class="nav-icon">📋</span>
-            <span>Candidaturas</span>
-        </button>
-        <button class="nav-item" data-page="settings" id="nav-settings">
-            <span class="nav-icon">⚙️</span>
-            <span>Configurações</span>
-        </button>
-    </nav>
-
-    <div class="sidebar-footer">
-        <div class="bot-status" id="bot-status-indicator">
-            <span class="status-dot idle"></span>
-            <span>Bot Inativo</span>
-        </div>
-    </div>
-</aside>
-
-<!-- ═══ MAIN CONTENT ═══ -->
-<main class="main-content">
-
-    <!-- ── DASHBOARD PAGE ── -->
-    <section class="page active" id="page-dashboard">
-        <div class="page-header">
-            <h2>Dashboard</h2>
-            <span class="page-subtitle" id="dashboard-date"></span>
+    <!-- ========================================== -->
+    <!-- LOGIN VIEW                                 -->
+    <!-- ========================================== -->
+    <div id="login-view" class="fixed inset-0 z-50 flex items-center justify-center bg-[#0f172a] transition-opacity duration-500">
+        <!-- Background Orbs -->
+        <div class="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
+            <div class="absolute -top-[20%] -left-[10%] w-[50%] h-[50%] rounded-full bg-indigo-600/20 blur-[120px]"></div>
+            <div class="absolute top-[60%] -right-[10%] w-[40%] h-[40%] rounded-full bg-purple-600/20 blur-[100px]"></div>
         </div>
 
-        <!-- KPI Cards -->
-        <div class="kpi-grid">
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">📧</div>
-                <div class="kpi-content">
-                    <span class="kpi-value" id="kpi-emails">0</span>
-                    <span class="kpi-label">Emails Enviados</span>
+        <div class="glass relative z-10 w-full max-w-md p-10 rounded-2xl shadow-2xl transform transition-transform duration-500 scale-95" id="login-box">
+            <div class="text-center mb-8">
+                <div class="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/10 mb-4 ring-1 ring-indigo-500/20">
+                    <i data-lucide="bot" class="w-8 h-8 text-indigo-400"></i>
                 </div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, #06b6d4, #3b82f6);">🔍</div>
-                <div class="kpi-content">
-                    <span class="kpi-value" id="kpi-total">0</span>
-                    <span class="kpi-label">Vagas Processadas</span>
-                </div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, #10b981, #34d399);">📅</div>
-                <div class="kpi-content">
-                    <span class="kpi-value" id="kpi-today">0</span>
-                    <span class="kpi-label">Hoje</span>
-                </div>
-            </div>
-            <div class="kpi-card">
-                <div class="kpi-icon" style="background: linear-gradient(135deg, #f59e0b, #ef4444);">🤖</div>
-                <div class="kpi-content">
-                    <span class="kpi-value" id="kpi-api">0</span>
-                    <span class="kpi-label">Chamadas Gemini</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Charts -->
-        <div class="charts-grid">
-            <div class="chart-card">
-                <h3>Candidaturas por Dia</h3>
-                <canvas id="chart-daily"></canvas>
-            </div>
-            <div class="chart-card">
-                <h3>Top Empresas</h3>
-                <canvas id="chart-companies"></canvas>
-            </div>
-        </div>
-    </section>
-
-    <!-- ── CONTROL PAGE ── -->
-    <section class="page" id="page-control">
-        <div class="page-header">
-            <h2>Controle do Bot</h2>
-            <span class="page-subtitle">Inicie, pare e monitore a execução em tempo real</span>
-        </div>
-
-        <div class="control-grid">
-            <!-- Launch Panel -->
-            <div class="control-card launch-card">
-                <h3>Iniciar Busca</h3>
-                <div class="mode-selector">
-                    <label class="mode-option">
-                        <input type="radio" name="bot-mode" value="full" checked>
-                        <div class="mode-box">
-                            <span class="mode-icon">🌐</span>
-                            <span class="mode-title">Completo</span>
-                            <span class="mode-desc">Busca + Manuais</span>
-                        </div>
-                    </label>
-                    <label class="mode-option">
-                        <input type="radio" name="bot-mode" value="manual">
-                        <div class="mode-box">
-                            <span class="mode-icon">📋</span>
-                            <span class="mode-title">Manual</span>
-                            <span class="mode-desc">Apenas JSON</span>
-                        </div>
-                    </label>
-                    <label class="mode-option">
-                        <input type="radio" name="bot-mode" value="teste">
-                        <div class="mode-box">
-                            <span class="mode-icon">🧪</span>
-                            <span class="mode-title">Teste</span>
-                            <span class="mode-desc">Sem enviar email</span>
-                        </div>
-                    </label>
-                </div>
-                <div class="control-buttons">
-                    <button class="btn btn-start" id="btn-start">
-                        <span>▶ INICIAR CAÇADA</span>
-                    </button>
-                    <button class="btn btn-stop" id="btn-stop" disabled>
-                        <span>⏹ PARAR</span>
-                    </button>
-                </div>
+                <h1 class="text-3xl font-bold text-white mb-2">Bem-vindo(a)</h1>
+                <p class="text-slate-400 text-sm">Autentique-se para acessar o painel de automação.</p>
             </div>
 
-            <!-- Live Terminal -->
-            <div class="control-card terminal-card">
-                <div class="terminal-header">
-                    <span class="terminal-dot red"></span>
-                    <span class="terminal-dot yellow"></span>
-                    <span class="terminal-dot green"></span>
-                    <span class="terminal-title">Terminal ao Vivo</span>
-                </div>
-                <pre class="terminal-body" id="terminal-output">Aguardando iniciar o bot...</pre>
-            </div>
-        </div>
-    </section>
-
-    <!-- ── JOBS PAGE ── -->
-    <section class="page" id="page-jobs">
-        <div class="page-header">
-            <h2>Histórico de Candidaturas</h2>
-            <span class="page-subtitle" id="jobs-count">0 registros</span>
-        </div>
-
-        <div class="jobs-table-wrapper">
-            <table class="jobs-table" id="jobs-table">
-                <thead>
-                    <tr>
-                        <th>Data</th>
-                        <th>Empresa</th>
-                        <th>Vaga</th>
-                        <th>Email</th>
-                        <th>Status</th>
-                    </tr>
-                </thead>
-                <tbody id="jobs-tbody">
-                    <tr><td colspan="5" class="empty-state">Carregando...</td></tr>
-                </tbody>
-            </table>
-        </div>
-    </section>
-
-    <!-- ── SETTINGS PAGE ── -->
-    <section class="page" id="page-settings">
-        <div class="page-header">
-            <h2>Configurações</h2>
-            <span class="page-subtitle">Gerencie API, email, currículo e filtros de busca</span>
-        </div>
-
-        <div class="settings-grid">
-            <!-- API & Email -->
-            <div class="settings-card">
-                <h3>🔑 API & Credenciais</h3>
-                <div class="form-group">
-                    <label for="cfg-api-key">Chave da API Gemini</label>
-                    <input type="password" id="cfg-api-key" placeholder="AIza...">
-                    <button class="btn-eye" onclick="togglePassword('cfg-api-key', this)">👁</button>
-                </div>
-                <div class="form-group">
-                    <label for="cfg-email">Email de Envio (Gmail)</label>
-                    <input type="email" id="cfg-email" placeholder="seu@gmail.com">
-                </div>
-                <div class="form-group">
-                    <label for="cfg-password">Senha de App</label>
-                    <input type="password" id="cfg-password" placeholder="abcdefghijklmnop">
-                    <button class="btn-eye" onclick="togglePassword('cfg-password', this)">👁</button>
-                </div>
-                <div class="form-group">
-                    <label for="cfg-cc">Email CC (opcional)</label>
-                    <input type="email" id="cfg-cc" placeholder="copia@email.com">
-                </div>
-            </div>
-
-            <!-- Candidate Info -->
-            <div class="settings-card">
-                <h3>👤 Dados do Candidato</h3>
-                <div class="form-group">
-                    <label for="cfg-name">Nome Completo</label>
-                    <input type="text" id="cfg-name" placeholder="Paulo Antonio do Nascimento Neto">
-                </div>
-                <div class="form-group">
-                    <label for="cfg-resume">Currículo Base (PDF)</label>
-                    <div class="upload-zone" id="upload-zone">
-                        <span class="upload-icon">📄</span>
-                        <span class="upload-text" id="upload-text">Arraste o PDF ou clique aqui</span>
-                        <input type="file" id="resume-file" accept=".pdf" hidden>
+            <form id="login-form" class="space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">CPF</label>
+                    <div class="relative">
+                        <i data-lucide="user" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"></i>
+                        <input type="text" id="login-cpf" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg py-3 pl-10 pr-4 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all placeholder-slate-500" placeholder="000.000.000-00" maxlength="14" autocomplete="off">
                     </div>
                 </div>
-            </div>
 
-            <!-- Search Filters -->
-            <div class="settings-card">
-                <h3>🔍 Filtros de Busca</h3>
-                <div class="form-group">
-                    <label for="cfg-max-jobs">Máx. vagas por categoria</label>
-                    <input type="number" id="cfg-max-jobs" min="1" max="50" value="10">
+                <div>
+                    <label class="block text-sm font-medium text-slate-300 mb-2">Senha</label>
+                    <div class="relative">
+                        <i data-lucide="lock" class="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400"></i>
+                        <input type="password" id="login-password" class="w-full bg-slate-900/50 border border-slate-700 rounded-lg py-3 pl-10 pr-12 text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all placeholder-slate-500" placeholder="••••••••">
+                        <button type="button" id="toggle-password" class="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
+                            <i data-lucide="eye" class="w-5 h-5"></i>
+                        </button>
+                    </div>
                 </div>
-                <div class="toggle-group">
-                    <label class="toggle-label">
-                        <span>Buscar vagas presenciais (Recife, Olinda, Jaboatão, Cabo)</span>
-                        <input type="checkbox" id="cfg-presencial" class="toggle-input">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-                <div class="toggle-group">
-                    <label class="toggle-label">
-                        <span>Buscar vagas em Portugal</span>
-                        <input type="checkbox" id="cfg-portugal" class="toggle-input">
-                        <span class="toggle-slider"></span>
-                    </label>
-                </div>
-            </div>
 
-            <!-- Delays -->
-            <div class="settings-card">
-                <h3>⏱ Delays de Requisição</h3>
-                <div class="form-group">
-                    <label for="cfg-delay-min">Delay Mínimo (segundos)</label>
-                    <input type="number" id="cfg-delay-min" step="0.5" min="0.5" value="2">
-                </div>
-                <div class="form-group">
-                    <label for="cfg-delay-max">Delay Máximo (segundos)</label>
-                    <input type="number" id="cfg-delay-max" step="0.5" min="1" value="5">
-                </div>
-            </div>
+                <button type="submit" class="w-full bg-indigo-500 hover:bg-indigo-600 text-white font-semibold py-3 px-4 rounded-lg shadow-lg shadow-indigo-500/30 transition-all active:scale-[0.98] flex items-center justify-center gap-2 group">
+                    <span>Entrar no Sistema</span>
+                    <i data-lucide="arrow-right" class="w-5 h-5 group-hover:translate-x-1 transition-transform"></i>
+                </button>
+            </form>
         </div>
+    </div>
 
-        <div class="settings-actions">
-            <button class="btn btn-save" id="btn-save-config">💾 Salvar Configurações</button>
-            <span class="save-feedback" id="save-feedback"></span>
-        </div>
-    </section>
+    <!-- ========================================== -->
+    <!-- APP VIEW (DASHBOARD)                       -->
+    <!-- ========================================== -->
+    <div id="app-view" class="hidden min-h-screen flex">
+        
+        <!-- Sidebar -->
+        <aside class="w-72 glass border-r border-slate-800 flex flex-col relative z-20">
+            <div class="p-6 border-b border-slate-800/50 flex items-center gap-3">
+                <div class="w-10 h-10 rounded-lg bg-indigo-500/20 flex items-center justify-center ring-1 ring-indigo-500/30">
+                    <i data-lucide="briefcase" class="w-6 h-6 text-indigo-400"></i>
+                </div>
+                <div>
+                    <h2 class="text-lg font-bold gradient-text">Bot Vagas</h2>
+                    <p class="text-xs text-slate-500">v4.0 Premium</p>
+                </div>
+            </div>
 
-</main>
+            <nav class="flex-1 p-4 space-y-2" id="nav-menu">
+                <button class="nav-btn active w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-indigo-400 bg-indigo-500/10 transition-all hover:bg-indigo-500/20" data-target="dashboard">
+                    <i data-lucide="layout-dashboard" class="w-5 h-5"></i>
+                    Visão Geral
+                </button>
+                <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="control">
+                    <i data-lucide="terminal-square" class="w-5 h-5"></i>
+                    Controle do Bot
+                </button>
+                <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="hunter">
+                    <i data-lucide="target" class="w-5 h-5"></i>
+                    Email Hunter
+                </button>
+                <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="jobs">
+                    <i data-lucide="history" class="w-5 h-5"></i>
+                    Candidaturas
+                </button>
+                <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="settings">
+                    <i data-lucide="settings" class="w-5 h-5"></i>
+                    Configurações
+                </button>
+            </nav>
 
-<!-- Toast Notification -->
-<div class="toast-container" id="toast-container"></div>
+            <div class="p-4 border-t border-slate-800/50">
+                <button id="btn-logout" class="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-rose-400 hover:text-rose-300 transition-all hover:bg-rose-500/10">
+                    <i data-lucide="log-out" class="w-5 h-5"></i>
+                    Sair do Sistema
+                </button>
+            </div>
+        </aside>
 
-<script src="/static/app.js"></script>
+        <!-- Main Content -->
+        <main class="flex-1 flex flex-col relative h-screen overflow-hidden bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-fixed">
+            <!-- Background Orbs Main -->
+            <div class="absolute top-0 right-0 w-[40%] h-[40%] rounded-full bg-blue-600/10 blur-[100px] pointer-events-none"></div>
+            <div class="absolute bottom-0 left-1/4 w-[30%] h-[30%] rounded-full bg-indigo-600/10 blur-[100px] pointer-events-none"></div>
+
+            <!-- Top Header -->
+            <header class="h-16 glass border-b border-slate-800/50 flex items-center justify-between px-8 z-10">
+                <h1 class="text-xl font-semibold text-white tracking-wide" id="page-title">Visão Geral</h1>
+                <div class="flex items-center gap-4">
+                    <div id="status-indicator" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700/50">
+                        <div class="w-2 h-2 rounded-full bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]" id="bot-dot"></div>
+                        <span class="text-xs font-medium text-slate-300" id="bot-status-text">Bot Inativo</span>
+                    </div>
+                    <div class="w-8 h-8 rounded-full bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center">
+                        <i data-lucide="user" class="w-4 h-4 text-indigo-400"></i>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Scrollable Pages -->
+            <div class="flex-1 overflow-y-auto p-8 relative z-10" id="main-content">
+                
+                <!-- DASHBOARD PAGE -->
+                <div class="page fade-enter fade-enter-active" id="page-dashboard">
+                    <div class="flex justify-between items-end mb-8">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white">Métricas de Performance</h2>
+                            <p class="text-slate-400 text-sm mt-1" id="dashboard-date">Carregando...</p>
+                        </div>
+                    </div>
+
+                    <!-- KPI Cards -->
+                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+                        <div class="glass p-6 rounded-2xl hover:-translate-y-1 transition-transform">
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="p-3 bg-blue-500/10 rounded-xl"><i data-lucide="send" class="w-6 h-6 text-blue-400"></i></div>
+                            </div>
+                            <p class="text-slate-400 text-sm font-medium mb-1">Currículos Enviados</p>
+                            <h3 class="text-3xl font-bold text-white" id="kpi-emails">0</h3>
+                        </div>
+                        <div class="glass p-6 rounded-2xl hover:-translate-y-1 transition-transform">
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="p-3 bg-indigo-500/10 rounded-xl"><i data-lucide="search" class="w-6 h-6 text-indigo-400"></i></div>
+                            </div>
+                            <p class="text-slate-400 text-sm font-medium mb-1">Vagas Analisadas</p>
+                            <h3 class="text-3xl font-bold text-white" id="kpi-total">0</h3>
+                        </div>
+                        <div class="glass p-6 rounded-2xl hover:-translate-y-1 transition-transform">
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="p-3 bg-emerald-500/10 rounded-xl"><i data-lucide="calendar" class="w-6 h-6 text-emerald-400"></i></div>
+                            </div>
+                            <p class="text-slate-400 text-sm font-medium mb-1">Candidaturas Hoje</p>
+                            <h3 class="text-3xl font-bold text-white" id="kpi-today">0</h3>
+                        </div>
+                        <div class="glass p-6 rounded-2xl hover:-translate-y-1 transition-transform">
+                            <div class="flex justify-between items-start mb-4">
+                                <div class="p-3 bg-purple-500/10 rounded-xl"><i data-lucide="cpu" class="w-6 h-6 text-purple-400"></i></div>
+                            </div>
+                            <p class="text-slate-400 text-sm font-medium mb-1">Chamadas IA (Gemini)</p>
+                            <h3 class="text-3xl font-bold text-white" id="kpi-api">0</h3>
+                        </div>
+                    </div>
+
+                    <!-- Charts -->
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                        <div class="lg:col-span-2 glass p-6 rounded-2xl">
+                            <h3 class="text-lg font-semibold text-white mb-6">Atividade nos Últimos 30 Dias</h3>
+                            <div class="h-72 w-full"><canvas id="chart-daily"></canvas></div>
+                        </div>
+                        <div class="glass p-6 rounded-2xl">
+                            <h3 class="text-lg font-semibold text-white mb-6">Top Empresas</h3>
+                            <div class="h-64 w-full flex justify-center"><canvas id="chart-companies"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- CONTROL PAGE -->
+                <div class="page hidden fade-enter" id="page-control">
+                    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+                        <div class="glass p-6 rounded-2xl flex flex-col gap-6">
+                            <div>
+                                <h3 class="text-lg font-semibold text-white mb-2">Painel de Controle</h3>
+                                <p class="text-slate-400 text-sm">Selecione o modo de operação e gerencie a execução do bot aplicador de vagas.</p>
+                            </div>
+                            
+                            <div class="space-y-3">
+                                <label class="flex items-center gap-3 p-4 rounded-xl border border-slate-700/50 bg-slate-800/30 cursor-pointer hover:bg-slate-800/60 transition-colors">
+                                    <input type="radio" name="bot-mode" value="full" class="text-indigo-500 focus:ring-indigo-500 bg-slate-900 border-slate-600" checked>
+                                    <div>
+                                        <div class="text-white font-medium">Completo (Automático + Banco)</div>
+                                        <div class="text-xs text-slate-400 mt-0.5">Busca no Google e aplica para Leads pendentes.</div>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 p-4 rounded-xl border border-slate-700/50 bg-slate-800/30 cursor-pointer hover:bg-slate-800/60 transition-colors">
+                                    <input type="radio" name="bot-mode" value="manual" class="text-indigo-500 focus:ring-indigo-500 bg-slate-900 border-slate-600">
+                                    <div>
+                                        <div class="text-white font-medium">Apenas Leads (Banco)</div>
+                                        <div class="text-xs text-slate-400 mt-0.5">Dispara currículos apenas para leads capturados pendentes.</div>
+                                    </div>
+                                </label>
+                                <label class="flex items-center gap-3 p-4 rounded-xl border border-slate-700/50 bg-slate-800/30 cursor-pointer hover:bg-slate-800/60 transition-colors">
+                                    <input type="radio" name="bot-mode" value="teste" class="text-indigo-500 focus:ring-indigo-500 bg-slate-900 border-slate-600">
+                                    <div>
+                                        <div class="text-white font-medium">Modo Teste</div>
+                                        <div class="text-xs text-slate-400 mt-0.5">Gera PDF mas não envia emails.</div>
+                                    </div>
+                                </label>
+                            </div>
+
+                            <div class="mt-auto space-y-3 pt-6 border-t border-slate-800/50">
+                                <button id="btn-start" class="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-3 px-4 rounded-xl shadow-lg shadow-emerald-500/20 transition-all flex items-center justify-center gap-2">
+                                    <i data-lucide="play" class="w-5 h-5"></i> Iniciar Operação
+                                </button>
+                                <button id="btn-stop" class="w-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 font-medium py-3 px-4 rounded-xl border border-rose-500/20 transition-all flex items-center justify-center gap-2" disabled>
+                                    <i data-lucide="square" class="w-5 h-5"></i> Interromper
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Terminal -->
+                        <div class="lg:col-span-2 glass rounded-2xl border border-slate-700/50 overflow-hidden flex flex-col bg-[#0a0f1c]/90">
+                            <div class="h-10 bg-slate-900/80 border-b border-slate-800 flex items-center px-4 gap-2">
+                                <div class="flex gap-1.5">
+                                    <div class="w-3 h-3 rounded-full bg-rose-500/80"></div>
+                                    <div class="w-3 h-3 rounded-full bg-amber-500/80"></div>
+                                    <div class="w-3 h-3 rounded-full bg-emerald-500/80"></div>
+                                </div>
+                                <div class="ml-4 text-xs font-mono text-slate-400 flex items-center gap-2">
+                                    bash - live logs <div id="term-loader" class="hidden"><div class="dot-flashing ml-5"></div></div>
+                                </div>
+                            </div>
+                            <div class="flex-1 p-4 overflow-y-auto font-mono text-sm">
+                                <pre id="terminal-output" class="text-slate-300 whitespace-pre-wrap">Aguardando inicialização do bot...</pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- HUNTER PAGE -->
+                <div class="page hidden fade-enter h-full flex flex-col" id="page-hunter">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white">Email Hunter</h2>
+                            <p class="text-slate-400 text-sm mt-1">Busque leads (PMEs) da web ou gerencie os já encontrados.</p>
+                        </div>
+                        <div class="flex gap-3">
+                            <button id="btn-stop-hunter" class="hidden bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 px-4 py-2 rounded-lg text-sm font-medium border border-rose-500/20 transition-all items-center gap-2">
+                                Parar Caçada
+                            </button>
+                            <button id="btn-start-hunter" class="bg-indigo-500 hover:bg-indigo-600 text-white px-5 py-2 rounded-lg text-sm font-medium shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2">
+                                <i data-lucide="search" class="w-4 h-4"></i> Iniciar Nova Caçada
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Hunter Terminal (Collapsible) -->
+                    <div id="hunter-terminal-wrap" class="hidden glass rounded-xl border border-slate-700/50 overflow-hidden flex-col bg-[#0a0f1c]/90 mb-6 shrink-0 h-48">
+                        <div class="h-8 bg-slate-900/80 border-b border-slate-800 flex items-center px-4">
+                            <span class="text-xs font-mono text-slate-400">hunter_process.log</span>
+                        </div>
+                        <div class="flex-1 p-3 overflow-y-auto font-mono text-xs">
+                            <pre id="hunter-terminal-output" class="text-emerald-400 whitespace-pre-wrap"></pre>
+                        </div>
+                    </div>
+
+                    <!-- Leads Table -->
+                    <div class="glass rounded-2xl overflow-hidden flex-1 flex flex-col">
+                        <div class="p-5 border-b border-slate-800/50 flex justify-between items-center bg-slate-800/20">
+                            <div class="flex items-center gap-3">
+                                <h3 class="text-lg font-semibold text-white">Leads Capturados</h3>
+                                <span class="bg-slate-800 text-slate-300 text-xs px-2.5 py-1 rounded-full font-medium border border-slate-700" id="hunter-leads-count">0</span>
+                            </div>
+                            <button id="btn-apply-leads" class="bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow-lg shadow-emerald-500/20 transition-all flex items-center gap-2">
+                                <i data-lucide="rocket" class="w-4 h-4"></i> Disparar Candidaturas
+                            </button>
+                        </div>
+                        <div class="flex-1 overflow-auto">
+                            <table class="w-full text-left border-collapse min-w-[800px]">
+                                <thead class="bg-slate-900/50 sticky top-0 backdrop-blur-md border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                                    <tr>
+                                        <th class="p-4 font-medium">Empresa</th>
+                                        <th class="p-4 font-medium">E-mail</th>
+                                        <th class="p-4 font-medium">Cargo/Setor</th>
+                                        <th class="p-4 font-medium">Status / Fonte</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="hunter-tbody" class="text-sm divide-y divide-slate-800/50 bg-slate-900/10">
+                                    <!-- Rendered via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- JOBS PAGE -->
+                <div class="page hidden fade-enter h-full flex flex-col" id="page-jobs">
+                    <div class="flex justify-between items-center mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white">Histórico de Candidaturas</h2>
+                            <p class="text-slate-400 text-sm mt-1">Registro detalhado dos últimos 50 disparos efetuados.</p>
+                        </div>
+                    </div>
+
+                    <div class="glass rounded-2xl overflow-hidden flex-1 flex flex-col">
+                        <div class="flex-1 overflow-auto">
+                            <table class="w-full text-left border-collapse min-w-[800px]">
+                                <thead class="bg-slate-900/50 sticky top-0 backdrop-blur-md border-b border-slate-800 text-slate-400 text-xs uppercase tracking-wider">
+                                    <tr>
+                                        <th class="p-4 font-medium">Data</th>
+                                        <th class="p-4 font-medium">Empresa</th>
+                                        <th class="p-4 font-medium">Vaga</th>
+                                        <th class="p-4 font-medium">E-mail Destino</th>
+                                        <th class="p-4 font-medium">Status</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="jobs-tbody" class="text-sm divide-y divide-slate-800/50 bg-slate-900/10">
+                                    <!-- Rendered via JS -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SETTINGS PAGE -->
+                <div class="page hidden fade-enter" id="page-settings">
+                    <div class="max-w-4xl mx-auto">
+                        <h2 class="text-2xl font-bold text-white mb-6">Configurações do Sistema</h2>
+                        
+                        <div class="glass rounded-2xl p-8 mb-6">
+                            <h3 class="text-lg font-semibold text-white mb-4 border-b border-slate-800 pb-3 flex items-center gap-2">
+                                <i data-lucide="file-text" class="w-5 h-5 text-indigo-400"></i> Currículo Base (PDF)
+                            </h3>
+                            <div id="upload-zone" class="border-2 border-dashed border-slate-700 bg-slate-800/30 hover:bg-slate-800/50 transition-colors rounded-xl p-8 text-center cursor-pointer group">
+                                <input type="file" id="resume-file" class="hidden" accept=".pdf">
+                                <div class="w-16 h-16 mx-auto bg-indigo-500/10 rounded-full flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+                                    <i data-lucide="upload-cloud" class="w-8 h-8 text-indigo-400"></i>
+                                </div>
+                                <p class="text-white font-medium mb-1" id="upload-text">Arraste seu PDF ou clique para selecionar</p>
+                                <p class="text-slate-500 text-sm">O robô irá ler e extrair este conteúdo para adaptar nas vagas.</p>
+                            </div>
+                        </div>
+
+                        <div class="glass rounded-2xl p-6 mb-6">
+                            <h3 class="text-lg font-semibold text-white mb-4 border-b border-slate-800 pb-3 flex items-center gap-2">
+                                <i data-lucide="zap" class="w-5 h-5 text-amber-400"></i> Estratégia de Candidatura
+                            </h3>
+                            <div class="flex items-start gap-4">
+                                <div class="relative flex items-center pt-1">
+                                    <input type="checkbox" id="cfg-personalize-emails" class="peer sr-only">
+                                    <div class="w-11 h-6 bg-slate-700 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[6px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500 cursor-pointer transition-colors" onclick="document.getElementById('cfg-personalize-emails').click()"></div>
+                                </div>
+                                <div>
+                                    <label for="cfg-personalize-emails" class="text-sm font-medium text-white cursor-pointer">Otimizar Inteligência Artificial (Recomendado)</label>
+                                    <p class="text-xs text-slate-400 mt-1">Gerar currículos customizados com o Gemini <b>apenas</b> para envios via E-mail. Vagas enviadas em sites de empresas usarão o PDF original para economizar milhares de tokens e tempo.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                            <div class="glass rounded-2xl p-6">
+                                <h3 class="text-lg font-semibold text-white mb-4 border-b border-slate-800 pb-3 flex items-center gap-2">
+                                    <i data-lucide="mail" class="w-5 h-5 text-emerald-400"></i> Configurações de E-mail
+                                </h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Seu Nome Completo</label>
+                                        <input type="text" id="cfg-name" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Endereço de E-mail (Remetente)</label>
+                                        <input type="email" id="cfg-email" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Senha de App (Gmail)</label>
+                                        <input type="password" id="cfg-password" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">E-mail em Cópia (CC Opcional)</label>
+                                        <input type="email" id="cfg-cc" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="glass rounded-2xl p-6">
+                                <h3 class="text-lg font-semibold text-white mb-4 border-b border-slate-800 pb-3 flex items-center gap-2">
+                                    <i data-lucide="cpu" class="w-5 h-5 text-purple-400"></i> API e Segurança
+                                </h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Google Gemini API Key</label>
+                                        <input type="password" id="cfg-api-key" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-indigo-500 outline-none">
+                                    </div>
+                                    <div class="mt-8 pt-4 border-t border-slate-800">
+                                        <label class="block text-xs font-medium text-slate-400 mb-1">Senha do Dashboard</label>
+                                        <input type="password" id="cfg-dashboard-password" class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-white text-sm focus:ring-1 focus:ring-rose-500 outline-none" placeholder="Senha atual para login">
+                                        <p class="text-[10px] text-slate-500 mt-1">Usada junto com o seu CPF para acessar o sistema.</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex justify-end gap-4 items-center">
+                            <span id="save-feedback" class="text-emerald-400 text-sm font-medium opacity-0 transition-opacity">Salvo com sucesso!</span>
+                            <button id="btn-save-config" class="bg-indigo-500 hover:bg-indigo-600 text-white font-medium py-2.5 px-6 rounded-lg shadow-lg shadow-indigo-500/20 transition-all flex items-center gap-2">
+                                <i data-lucide="save" class="w-4 h-4"></i> Salvar Todas as Configurações
+                            </button>
+                        </div>
+                        <div class="h-10"></div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+        // Initialize Lucide icons
+        lucide.createIcons();
+    </script>
 </body>
 </html>
