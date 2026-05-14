@@ -30,23 +30,25 @@ from rich.table import Table
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, "config.env"))
 
-from modules.browser_automator import apply_via_browser
-from modules.company_researcher import find_company_email
-from modules.config_validator import run_validation
-from modules.email_sender import send_application_email
-from modules.job_scraper import search_all_jobs
-from modules.logger import (
+from app.config import settings
+from app.core.browser import apply_via_browser
+from app.core.researcher import find_company_email
+from app.core.validator import run_validation
+from app.core.mailer import send_application_email
+from app.core.scraper import search_all_jobs
+from app.services.logger import (
     build_applied_set, export_csv, get_recent, get_stats,
-    load_history, log_application, save_history
+    load_history, log_application, save_history,
+    export_metrics, inc_fallback
 )
-from modules.metrics import export_metrics, inc_fallback
-from modules.database import get_pending_leads, update_lead_status_by_email
-from modules.resume_adapter import (
+from app.db.repositories import LeadRepository
+from app.core.resume import (
     adapt_resume_and_analyze, extract_resume_text,
     generate_resume_docx, generate_resume_pdf, is_international_job
 )
 
 _RESUME_CACHE_FILE = os.path.join(BASE_DIR, "data", "resume_cache.json")
+
 
 def load_resume_cache():
     if os.path.exists(_RESUME_CACHE_FILE):
@@ -149,7 +151,7 @@ def show_status():
 
 def load_pending_leads_from_db() -> list[dict]:
     """Carrega leads do banco SQLite com status 'pending'."""
-    pending = get_pending_leads()
+    pending = LeadRepository.get_pending()
     jobs = []
     
     for lead in pending:
@@ -180,7 +182,7 @@ def load_pending_leads_from_db() -> list[dict]:
 def run_bot(test_mode: bool = False, manual_only: bool = False):
     """Executa o fluxo principal do bot."""
     start_time = datetime.now()
-    candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
+    candidate_name = settings.CANDIDATE_NAME
 
     print_banner()
 
