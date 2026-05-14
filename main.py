@@ -246,6 +246,11 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
     console.print(f"\n[bold cyan]🚀 Processando {len(jobs)} vagas...[/bold cyan]")
 
     for i, job in enumerate(jobs):
+        titulo_check = job.get('titulo', '').strip().lower()
+        if not titulo_check or titulo_check in ["não especificado", "nao especificado", "not specified", "não especificada", "nao especificada", "none"]:
+            job['titulo'] = "Desenvolvedor Backend"
+            job['_force_base_resume'] = True
+
         console.rule(f"[dim]Vaga {i+1}/{len(jobs)}[/dim]")
         console.print(f"  [bold]📋 {job['titulo']}[/bold]")
         console.print(f"  [cyan]🏢 {job['empresa']}[/cyan]  📍 {job['local']}")
@@ -279,12 +284,16 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
             if personalize_only_emails and not is_email_job:
                 skip_ai = True
                 
+            if job.get('_force_base_resume'):
+                skip_ai = True
+                
             pdf_path = ""
             analysis = {}
             adapted = {}
             
             if skip_ai:
-                console.print("  [blue]⚡ Otimização de Tokens:[/blue] Vaga sem e-mail detectada. Usando currículo base para site/portal.")
+                msg = "Título não especificado." if job.get('_force_base_resume') else "Vaga sem e-mail detectada."
+                console.print(f"  [blue]⚡ Usando currículo base:[/blue] {msg}")
                 pdf_path = get_resume_path()
             else:
                 # 5b. Analisar e Adaptar (Verificando Cache primeiro)

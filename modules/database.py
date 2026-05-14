@@ -61,6 +61,11 @@ def init_db():
         CREATE UNIQUE INDEX IF NOT EXISTS idx_applications_empresa_vaga 
         ON applications (empresa, vaga)
         ''')
+
+        cursor.execute('''
+        CREATE INDEX IF NOT EXISTS idx_applications_lower_keys 
+        ON applications (LOWER(empresa), LOWER(vaga))
+        ''')
         
         conn.commit()
 
@@ -164,6 +169,13 @@ def get_all_applications():
         cursor.execute("SELECT * FROM applications ORDER BY data ASC")
         # Ordering by id/date ASC is like original json append
         return [dict(row) for row in cursor.fetchall()]
+
+def get_applied_keys():
+    """Retorna um set com (empresa, vaga) para lookup O(1) na memória de forma super otimizada."""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT LOWER(empresa), LOWER(vaga) FROM applications")
+        return {(str(row[0]).strip(), str(row[1]).strip()) for row in cursor.fetchall() if row[0] and row[1]}
 
 def is_already_applied(empresa, vaga):
     with get_db_connection() as conn:

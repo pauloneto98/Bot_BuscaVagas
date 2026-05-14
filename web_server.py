@@ -12,6 +12,7 @@ import sys
 import threading
 import secrets
 from datetime import datetime
+from queue import Queue, Empty
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +74,10 @@ _bot_lock = threading.Lock()
 # ── Hunter process state ──────────────────────────────────────────
 _hunter_process: subprocess.Popen | None = None
 _hunter_lock = threading.Lock()
+
+# ── Auto process state ────────────────────────────────────────────
+_auto_process: subprocess.Popen | None = None
+_auto_stdout: str = ""
 HUNTER_LOG_FILE = os.path.join(DATA_DIR, "hunter.log")
 
 
@@ -113,7 +118,7 @@ def _parse_env_file() -> dict:
     config = {}
     if not os.path.exists(CONFIG_FILE):
         return config
-    with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+    with open(CONFIG_FILE, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line or line.startswith("#"):
@@ -526,6 +531,85 @@ def serve_index():
     return FileResponse(os.path.join(WEB_DIR, "index.html"))
 
 
+# =====================================================================
+#  ENDPOINTS DO MODO AUTÔNOMO 24/7
+# =====================================================================
+
+def enqueue_auto_output(out, queue):
+    for line in iter(out.readline, ''):
+        queue.put(line)
+    out.close()
+
+@app.get("/api/auto/status")
+def get_auto_status():
+    global _auto_process
+    running = _auto_process is not None and _auto_process.poll() is None
+    return {"running": running}
+
+@app.post("/api/auto/start", dependencies=[Depends(verify_token)])
+def start_auto():
+    global _auto_process, _auto_stdout
+    if _auto_process is not None and _auto_process.poll() is None:
+        return {"status": "already running"}
+    
+    _auto_stdout = ""
+    env = os.environ.copy()
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    
+    # Run the continuous script
+    _auto_process = subprocess.Popen(
+        [sys.executable, os.path.join(BASE_DIR, "scripts", "run_247.py")],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        cwd=BASE_DIR,
+        env=env,
+        text=True,
+        bufsize=1,
+        encoding="utf-8"
+    )
+    
+    q = Queue()
+    t = threading.Thread(target=enqueue_auto_output, args=(_auto_process.stdout, q))
+    t.daemon = True
+    t.start()
+    
+    def collect_output():
+        global _auto_stdout
+        while _auto_process.poll() is None:
+            try:
+                line = q.get(timeout=0.1)
+                _auto_stdout += line
+                # Keep last 50000 chars to avoid memory issues
+                if len(_auto_stdout) > 50000:
+                    _auto_stdout = _auto_stdout[-50000:]
+            except Empty:
+                continue
+        # Collect remaining
+        while not q.empty():
+            _auto_stdout += q.get()
+
+    threading.Thread(target=collect_output, daemon=True).start()
+    return {"status": "started"}
+
+@app.post("/api/auto/stop", dependencies=[Depends(verify_token)])
+def stop_auto():
+    global _auto_process, _auto_stdout
+    if _auto_process is not None and _auto_process.poll() is None:
+        _auto_process.terminate()
+        _auto_process.wait(timeout=5)
+        _auto_stdout += "\n[!] PROCESSO AUTÔNOMO INTERROMPIDO PELO USUÁRIO.\n"
+        return {"status": "stopped"}
+    return {"status": "not running"}
+
+@app.get("/api/auto/logs", dependencies=[Depends(verify_token)])
+def get_auto_logs():
+    return {"log": _auto_stdout}
+
+
+# =====================================================================
+#  EXECUÇÃO PRINCIPAL
+# =====================================================================
 if __name__ == "__main__":
     import uvicorn
     print("\n>>> Bot Busca Vagas - Dashboard Web")

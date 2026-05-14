@@ -182,6 +182,7 @@ navButtons.forEach(btn => {
         if (target === 'jobs') loadJobs();
         if (target === 'hunter') loadHunterLeads();
         if (target === 'settings') loadConfig();
+        if (target === 'auto') checkAutoStatus();
     });
 });
 
@@ -447,8 +448,80 @@ function stopLogPolling() {
 }
 
 
+//  AUTO 24/7 (ORCHESTRATOR)
 // ═══════════════════════════════════════════════════════════════════
-//  JOBS & HUNTER TABLES
+
+const btnStartAuto = document.getElementById('btn-start-auto');
+const btnStopAuto = document.getElementById('btn-stop-auto');
+const autoTerminal = document.getElementById('auto-terminal-output');
+const autoTerminalWrap = document.getElementById('auto-terminal-wrap');
+
+let autoStatusTimer = null;
+
+async function checkAutoStatus() {
+    try {
+        const res = await apiFetch(`/api/auto/status`);
+        const data = await res.json();
+        
+        if (data.running) {
+            btnStartAuto.classList.add('hidden');
+            btnStopAuto.classList.remove('hidden');
+            autoTerminalWrap.classList.add('ring-1', 'ring-emerald-500/50', 'shadow-[0_0_20px_rgba(16,185,129,0.1)]');
+            autoTerminalWrap.classList.remove('border-slate-800');
+            
+            // Poll logs
+            if (!autoStatusTimer) {
+                autoStatusTimer = setInterval(updateAutoLogs, 1000);
+            }
+        } else {
+            btnStartAuto.classList.remove('hidden');
+            btnStopAuto.classList.add('hidden');
+            autoTerminalWrap.classList.remove('ring-1', 'ring-emerald-500/50', 'shadow-[0_0_20px_rgba(16,185,129,0.1)]');
+            autoTerminalWrap.classList.add('border-slate-800');
+            
+            if (autoStatusTimer) {
+                clearInterval(autoStatusTimer);
+                autoStatusTimer = null;
+                updateAutoLogs(); // final fetch
+            }
+        }
+    } catch (err) { }
+}
+
+async function updateAutoLogs() {
+    try {
+        const res = await apiFetch(`/api/auto/logs`);
+        const data = await res.json();
+        const oldLog = autoTerminal.textContent;
+        const newLog = data.log || 'Nenhuma saída recebida.';
+        
+        if (oldLog !== newLog) {
+            autoTerminal.textContent = newLog;
+            autoTerminal.scrollTop = autoTerminal.scrollHeight;
+        }
+    } catch (err) { }
+}
+
+btnStartAuto.addEventListener('click', async () => {
+    autoTerminal.textContent = 'Iniciando Piloto Automático...';
+    try {
+        await apiFetch(`/api/auto/start`, { method: 'POST' });
+        checkAutoStatus();
+        showToast('Modo Autônomo iniciado!', 'success');
+    } catch (err) { }
+});
+
+btnStopAuto.addEventListener('click', async () => {
+    try {
+        await apiFetch(`/api/auto/stop`, { method: 'POST' });
+        checkAutoStatus();
+        showToast('Modo Autônomo interrompido.', 'info');
+    } catch (err) { }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════
+//  JOBS & SETTINGS TABLES
 // ═══════════════════════════════════════════════════════════════════
 
 async function loadJobs() {
@@ -486,6 +559,7 @@ const btnStartHunter = document.getElementById('btn-start-hunter');
 const btnStopHunter = document.getElementById('btn-stop-hunter');
 const hunterTerminal = document.getElementById('hunter-terminal-output');
 const hunterTerminalWrap = document.getElementById('hunter-terminal-wrap');
+
 let hunterLogPollInterval = null;
 
 if (btnStartHunter) {

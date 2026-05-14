@@ -189,6 +189,10 @@
                     <i data-lucide="target" class="w-5 h-5"></i>
                     Email Hunter
                 </button>
+                <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="auto">
+                    <i data-lucide="bot" class="w-5 h-5"></i>
+                    Modo Autônomo
+                </button>
                 <button class="nav-btn w-full flex items-center gap-3 px-4 py-3 text-sm font-medium rounded-xl text-slate-400 hover:text-slate-200 transition-all hover:bg-slate-800/50" data-target="jobs">
                     <i data-lucide="history" class="w-5 h-5"></i>
                     Candidaturas
@@ -346,7 +350,34 @@
                     </div>
                 </div>
 
-                <!-- HUNTER PAGE -->
+                <!-- AUTO MODE PAGE -->
+                <div class="page hidden fade-enter h-full flex flex-col" id="page-auto">
+                    <div class="flex justify-between items-end mb-6">
+                        <div>
+                            <h2 class="text-2xl font-bold text-white flex items-center gap-2">
+                                <i data-lucide="bot" class="w-6 h-6 text-emerald-400"></i> Piloto Automático (24/7)
+                            </h2>
+                            <p class="text-slate-400 text-sm mt-1">O robô roda em ciclos de busca e envios, com repouso inteligente.</p>
+                        </div>
+                        <div class="flex gap-4">
+                            <button id="btn-stop-auto" class="hidden px-5 py-2.5 bg-rose-500/10 text-rose-400 hover:bg-rose-500/20 rounded-xl font-medium flex items-center gap-2 transition-all">
+                                <i data-lucide="square" class="w-4 h-4"></i> Parar Modo 24/7
+                            </button>
+                            <button id="btn-start-auto" class="px-5 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium shadow-[0_0_15px_rgba(16,185,129,0.4)] flex items-center gap-2 transition-all">
+                                <i data-lucide="play" class="w-4 h-4"></i> Ligar Piloto Automático
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex-1 glass rounded-2xl p-4 flex flex-col min-h-[400px]" id="auto-terminal-wrap">
+                        <div class="flex items-center gap-2 mb-3 px-2 border-b border-slate-800/50 pb-2">
+                            <i data-lucide="terminal" class="w-4 h-4 text-slate-400"></i>
+                            <span class="text-sm font-mono text-slate-400">orchestrator.log</span>
+                        </div>
+                        <pre id="auto-terminal-output" class="flex-1 font-mono text-sm text-slate-300 overflow-y-auto whitespace-pre-wrap rounded-xl p-4 bg-slate-900/50 border border-slate-800 focus:outline-none">Aguardando inicialização do modo 24/7...</pre>
+                    </div>
+                </div>
+
+                <!-- EMAIL HUNTER PAGE -->
                 <div class="page hidden fade-enter h-full flex flex-col" id="page-hunter">
                     <div class="flex justify-between items-center mb-6">
                         <div>

@@ -34,14 +34,9 @@ def save_history(history: dict):
 
 
 def build_applied_set(history: dict = None) -> set[tuple[str, str]]:
-    """Cria um set (O(1) lookup) com as vagas já aplicadas para busca super rápida."""
-    applied = set()
-    apps = get_all_applications()
-    for c in apps:
-        empresa = c.get("empresa", "").strip().lower()
-        vaga = c.get("vaga", "").strip().lower()
-        applied.add((empresa, vaga))
-    return applied
+    """Cria um set (O(1) lookup) com as vagas já aplicadas, otimizado trazendo apenas chaves."""
+    from modules.database import get_applied_keys
+    return get_applied_keys()
 
 def is_already_applied(history: dict, empresa: str, titulo_vaga: str) -> bool:
     """Verifica no banco se a vaga já foi aplicada."""
