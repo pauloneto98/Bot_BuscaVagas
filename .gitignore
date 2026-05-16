@@ -9,3 +9,9 @@ __pycache__/
 venv/
 .venv/
 *.pdf
+
+# Desktop App Build Artifacts
+dist/
+build/
+*.spec
+*.lnk
