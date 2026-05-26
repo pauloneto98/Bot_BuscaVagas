@@ -29,6 +29,8 @@ class ConfigPayload(BaseModel):
     request_delay_max: float = 5
     dashboard_password: str = "admin123"
     personalize_only_emails: bool = True
+    job_categories: str = ""
+    presencial_cities: str = ""
 
 
 def _parse_env_file() -> dict:
@@ -94,6 +96,8 @@ def get_config():
         "request_delay_max": float(raw.get("REQUEST_DELAY_MAX", "5")),
         "dashboard_password": raw.get("DASHBOARD_PASSWORD", "admin123"),
         "personalize_only_emails": raw.get("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true",
+        "job_categories": raw.get("JOB_CATEGORIES", "desenvolvedor de software, analista de dados, suporte de TI, help desk, desenvolvedor python, desenvolvedor web, analista de sistemas"),
+        "presencial_cities": raw.get("PRESENCIAL_CITIES", "Recife, Jaboatão dos Guararapes, Olinda"),
     }
 
 
@@ -112,6 +116,8 @@ def save_config(payload: ConfigPayload):
         "REQUEST_DELAY_MIN": str(payload.request_delay_min),
         "REQUEST_DELAY_MAX": str(payload.request_delay_max),
         "PERSONALIZE_ONLY_EMAILS": str(payload.personalize_only_emails).lower(),
+        "JOB_CATEGORIES": payload.job_categories,
+        "PRESENCIAL_CITIES": payload.presencial_cities,
     }
     if hasattr(payload, 'dashboard_password') and payload.dashboard_password:
         env_map["DASHBOARD_PASSWORD"] = payload.dashboard_password
@@ -136,5 +142,12 @@ async def upload_resume(file: UploadFile = File(...)):
     env = _parse_env_file()
     env["RESUME_PDF"] = safe_name
     _write_env_file(env)
+
+    cache_file = os.path.join(settings.DATA_DIR, "base_resume_parsed.json")
+    if os.path.exists(cache_file):
+        try:
+            os.remove(cache_file)
+        except OSError:
+            pass
 
     return {"status": "ok", "filename": safe_name, "message": f"Curriculo '{safe_name}' salvo com sucesso!"}

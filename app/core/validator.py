@@ -26,10 +26,10 @@ def _check_gemini_api() -> tuple[bool, str]:
         if not api_key:
             return False, "GEMINI_API_KEY não definida"
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel(settings.GEMINI_MODEL)
         resp = model.generate_content("Responda apenas: OK")
         if resp.text:
-            return True, f"Conectado ✓ (modelo: gemini-1.5-flash)"
+            return True, f"Conectado ✓ (modelo: {settings.GEMINI_MODEL})"
         return False, "API respondeu sem texto"
     except Exception as e:
         err = str(e)

@@ -42,20 +42,10 @@ def run_continuous():
         print(f"INICIANDO CICLO #{ciclo} - {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}")
         print(f"{'=' * 60}\n")
 
-        # 1. Run Hunter
-        print(">>> ETAPA 1: CACADOR DE LEADS (Buscando novas empresas na web)")
+        print(">>> CICLO: busca de leads + candidaturas (pipeline unificado)")
         subprocess.run(
-            [sys.executable, "-m", "app.core.hunter", "--max-queries", "8"],
-            cwd=BASE_DIR
-        )
-
-        time.sleep(10)
-
-        # 2. Run main applicator
-        print("\n>>> ETAPA 2: APLICADOR (Candidatando-se as vagas encontradas)")
-        subprocess.run(
-            [sys.executable, os.path.join(BASE_DIR, "main.py")],
-            cwd=BASE_DIR
+            [sys.executable, "-m", "app.services.run_once", "--hunt-leads"],
+            cwd=BASE_DIR,
         )
 
         # 3. Cooldown

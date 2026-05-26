@@ -9,128 +9,18 @@ const API = '';  // Same origin
 //  STATE & AUTHENTICATION
 // ═══════════════════════════════════════════════════════════════════
 
-let authToken = localStorage.getItem('bot_auth_token') || null;
-
-const loginView = document.getElementById('login-view');
-const appView = document.getElementById('app-view');
-
-function setToken(token) {
-    authToken = token;
-    if (token) {
-        localStorage.setItem('bot_auth_token', token);
-    } else {
-        localStorage.removeItem('bot_auth_token');
-    }
-}
-
-// Wrapper for fetch that auto-injects Bearer token
 async function apiFetch(endpoint, options = {}) {
     if (!options.headers) options.headers = {};
-    if (authToken) {
-        options.headers['Authorization'] = `Bearer ${authToken}`;
-    }
     const res = await fetch(`${API}${endpoint}`, options);
-    
-    // If Unauthorized, force logout
-    if (res.status === 401) {
-        handleLogout();
-        throw new Error("Unauthorized");
-    }
     return res;
 }
 
-function showLoginScreen() {
-    loginView.classList.remove('hidden', 'opacity-0');
-    appView.classList.add('hidden');
-    setTimeout(() => {
-        document.getElementById('login-box').classList.remove('scale-95', 'opacity-0');
-        document.getElementById('login-box').classList.add('scale-100', 'opacity-100');
-    }, 50);
-}
-
-function showDashboardScreen() {
-    document.getElementById('login-box').classList.remove('scale-100');
-    document.getElementById('login-box').classList.add('scale-95', 'opacity-0');
-    loginView.classList.add('opacity-0');
-    setTimeout(() => {
-        loginView.classList.add('hidden');
-        appView.classList.remove('hidden');
-        // Initial Loads
-        loadDashboard();
-        checkBotStatus();
-        checkHunterStatus();
-        loadHunterLeads();
-    }, 400);
-}
-
-function handleLogout() {
-    setToken(null);
-    showLoginScreen();
-    showToast('Sessão encerrada.', 'info');
-}
-
-document.getElementById('btn-logout').addEventListener('click', handleLogout);
-
-// ═══════════════════════════════════════════════════════════════════
-//  LOGIN LOGIC & CPF MASK
-// ═══════════════════════════════════════════════════════════════════
-
-const cpfInput = document.getElementById('login-cpf');
-cpfInput.addEventListener('input', (e) => {
-    let val = e.target.value.replace(/\D/g, '');
-    if (val.length > 3) val = val.substring(0,3) + '.' + val.substring(3);
-    if (val.length > 7) val = val.substring(0,7) + '.' + val.substring(7);
-    if (val.length > 11) val = val.substring(0,11) + '-' + val.substring(11,13);
-    e.target.value = val;
-});
-
-const togglePasswordBtn = document.getElementById('toggle-password');
-const pwdInput = document.getElementById('login-password');
-togglePasswordBtn.addEventListener('click', () => {
-    if (pwdInput.type === 'password') {
-        pwdInput.type = 'text';
-        togglePasswordBtn.innerHTML = '<i data-lucide="eye-off" class="w-5 h-5"></i>';
-    } else {
-        pwdInput.type = 'password';
-        togglePasswordBtn.innerHTML = '<i data-lucide="eye" class="w-5 h-5"></i>';
-    }
+function bootDashboard() {
+    loadDashboard();
+    checkBotStatus();
+    checkAutoStatus();
     lucide.createIcons();
-});
-
-document.getElementById('login-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const cpf = cpfInput.value;
-    const password = pwdInput.value;
-    const btn = e.target.querySelector('button');
-    const originalContent = btn.innerHTML;
-    
-    btn.innerHTML = '<div class="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Entrando...';
-    btn.disabled = true;
-
-    try {
-        const res = await fetch(`${API}/api/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cpf, password })
-        });
-        
-        const data = await res.json();
-        
-        if (res.ok && data.token) {
-            setToken(data.token);
-            showToast(data.message, 'success');
-            showDashboardScreen();
-        } else {
-            showToast(data.detail || 'Erro ao fazer login', 'error');
-        }
-    } catch (err) {
-        showToast('Erro de conexão com o servidor', 'error');
-    } finally {
-        btn.innerHTML = originalContent;
-        btn.disabled = false;
-        lucide.createIcons();
-    }
-});
+}
 
 
 // ═══════════════════════════════════════════════════════════════════
@@ -144,7 +34,6 @@ const pageTitle = document.getElementById('page-title');
 const pageTitles = {
     'dashboard': 'Visão Geral',
     'control': 'Controle do Bot',
-    'hunter': 'Email Hunter',
     'jobs': 'Histórico de Candidaturas',
     'settings': 'Configurações'
 };
@@ -180,9 +69,11 @@ navButtons.forEach(btn => {
         // Load data specific to page
         if (target === 'dashboard') loadDashboard();
         if (target === 'jobs') loadJobs();
-        if (target === 'hunter') loadHunterLeads();
+        if (target === 'control') {
+            loadHunterLeads();
+            checkAutoStatus();
+        }
         if (target === 'settings') loadConfig();
-        if (target === 'auto') checkAutoStatus();
     });
 });
 
@@ -213,6 +104,8 @@ function showToast(message, type = 'info') {
 // ═══════════════════════════════════════════════════════════════════
 
 let chartDaily = null;
+let chartSources = null;
+let chartFunnel = null;
 let chartCompanies = null;
 
 async function loadDashboard() {
@@ -230,14 +123,13 @@ async function loadDashboard() {
         animateNumber('kpi-today', data.hoje || 0);
         animateNumber('kpi-api', data.metrics?.gemini_calls || 0);
 
-        // Daily chart with tailwind styling
-        const dailyCtx = document.getElementById('chart-daily').getContext('2d');
-        if (chartDaily) chartDaily.destroy();
-        
         // Configurações Globais Chart.js
         Chart.defaults.color = '#94a3b8';
         Chart.defaults.font.family = 'Inter, sans-serif';
 
+        // 1. Daily activity bar chart
+        const dailyCtx = document.getElementById('chart-daily').getContext('2d');
+        if (chartDaily) chartDaily.destroy();
         chartDaily = new Chart(dailyCtx, {
             type: 'bar',
             data: {
@@ -277,7 +169,87 @@ async function loadDashboard() {
             }
         });
 
-        // Companies chart
+        // 2. Sources doughnut chart
+        const sourcesCtx = document.getElementById('chart-sources').getContext('2d');
+        if (chartSources) chartSources.destroy();
+        const sourcesLabels = Object.keys(data.leads_sources || {});
+        const sourcesValues = Object.values(data.leads_sources || {});
+        chartSources = new Chart(sourcesCtx, {
+            type: 'doughnut',
+            data: {
+                labels: sourcesLabels,
+                datasets: [{
+                    data: sourcesValues,
+                    backgroundColor: [
+                        '#6366f1', '#10b981', '#f59e0b', '#3b82f6', '#ec4899', '#8b5cf6'
+                    ],
+                    borderWidth: 0,
+                    hoverOffset: 4,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '75%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: {
+                            color: '#94a3b8',
+                            font: { size: 11 },
+                            padding: 12,
+                            usePointStyle: true,
+                            pointStyleWidth: 8,
+                        }
+                    }
+                }
+            }
+        });
+
+        // 3. Funnel horizontal bar chart
+        const funnelCtx = document.getElementById('chart-funnel').getContext('2d');
+        if (chartFunnel) chartFunnel.destroy();
+        chartFunnel = new Chart(funnelCtx, {
+            type: 'bar',
+            data: {
+                labels: data.funnel?.labels || ["Vagas Encontradas", "Vagas Qualificadas", "Currículos Gerados", "E-mails Enviados"],
+                datasets: [{
+                    label: 'Total',
+                    data: data.funnel?.values || [0, 0, 0, 0],
+                    backgroundColor: [
+                        'rgba(99, 102, 241, 0.8)', // Indigo
+                        'rgba(59, 130, 246, 0.8)', // Blue
+                        'rgba(139, 92, 246, 0.8)', // Purple
+                        'rgba(16, 185, 129, 0.8)'  // Emerald
+                    ],
+                    borderColor: [
+                        '#6366f1', '#3b82f6', '#8b5cf6', '#10b981'
+                    ],
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    barThickness: 28,
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#64748b', precision: 0 }
+                    },
+                    y: {
+                        grid: { display: false },
+                        ticks: { color: '#e2e8f0', font: { weight: '500' } }
+                    }
+                }
+            }
+        });
+
+        // 4. Companies chart
         const compCtx = document.getElementById('chart-companies').getContext('2d');
         if (chartCompanies) chartCompanies.destroy();
         const compLabels = (data.top_empresas?.labels || []).map(l =>
@@ -354,12 +326,13 @@ const termLoader = document.getElementById('term-loader');
 let logPollInterval = null;
 
 btnStart.addEventListener('click', async () => {
-    const mode = document.querySelector('input[name="bot-mode"]:checked').value;
+    const mode = document.getElementById('cfg-test-mode')?.checked ? 'teste' : 'full';
+    const hunt_leads_first = document.getElementById('cfg-hunt-leads')?.checked ?? false;
     try {
         const res = await apiFetch(`/api/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mode })
+            body: JSON.stringify({ mode, hunt_leads_first })
         });
         const data = await res.json();
 
@@ -434,6 +407,7 @@ function startLogPolling() {
                 stopLogPolling();
                 showToast('A execução finalizou.', 'success');
                 loadDashboard();
+                loadHunterLeads();
             }
         } catch (err) {}
     }, 1500);
@@ -455,6 +429,7 @@ const btnStartAuto = document.getElementById('btn-start-auto');
 const btnStopAuto = document.getElementById('btn-stop-auto');
 const autoTerminal = document.getElementById('auto-terminal-output');
 const autoTerminalWrap = document.getElementById('auto-terminal-wrap');
+const autoLogSection = autoTerminalWrap;
 
 let autoStatusTimer = null;
 
@@ -466,8 +441,7 @@ async function checkAutoStatus() {
         if (data.running) {
             btnStartAuto.classList.add('hidden');
             btnStopAuto.classList.remove('hidden');
-            autoTerminalWrap.classList.add('ring-1', 'ring-emerald-500/50', 'shadow-[0_0_20px_rgba(16,185,129,0.1)]');
-            autoTerminalWrap.classList.remove('border-slate-800');
+            if (autoLogSection) autoLogSection.classList.remove('hidden');
             
             // Poll logs
             if (!autoStatusTimer) {
@@ -476,8 +450,7 @@ async function checkAutoStatus() {
         } else {
             btnStartAuto.classList.remove('hidden');
             btnStopAuto.classList.add('hidden');
-            autoTerminalWrap.classList.remove('ring-1', 'ring-emerald-500/50', 'shadow-[0_0_20px_rgba(16,185,129,0.1)]');
-            autoTerminalWrap.classList.add('border-slate-800');
+            if (autoLogSection) autoLogSection.classList.add('hidden');
             
             if (autoStatusTimer) {
                 clearInterval(autoStatusTimer);
@@ -533,7 +506,7 @@ async function loadJobs() {
         const tbody = document.getElementById('jobs-tbody');
 
         if (jobs.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">Nenhuma candidatura registrada.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-500">Nenhuma candidatura registrada.</td></tr>';
             return;
         }
 
@@ -542,12 +515,22 @@ async function loadJobs() {
                 ? '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><i data-lucide="check" class="w-3 h-3"></i> Enviado</span>'
                 : '<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20"><i data-lucide="x" class="w-3 h-3"></i> Falhou</span>';
             const email = j.email_destino || '—';
+            
+            let cvActionHtml = '<span class="text-slate-600 font-medium text-xs">—</span>';
+            if (j.curriculo_path) {
+                const filename = j.curriculo_path.split(/[/\\]/).pop();
+                cvActionHtml = `<button onclick="openPdfPreview('${filename.replace(/'/g, "\\'")}')" class="text-indigo-400 hover:text-indigo-300 p-1.5 rounded-lg hover:bg-slate-800/60 transition-colors inline-flex items-center gap-1 text-xs font-semibold" title="Visualizar PDF">
+                    <i data-lucide="eye" class="w-4 h-4"></i> Ver CV
+                </button>`;
+            }
+
             return `<tr class="hover:bg-slate-800/30 transition-colors">
                 <td class="p-4 text-slate-400">${(j.data || '').substring(0, 16)}</td>
                 <td class="p-4 text-white font-medium">${j.empresa || ''}</td>
                 <td class="p-4 text-slate-300">${j.vaga || ''}</td>
                 <td class="p-4 text-indigo-300 text-xs font-mono">${email}</td>
                 <td class="p-4">${statusHtml}</td>
+                <td class="p-4 text-right">${cvActionHtml}</td>
             </tr>`;
         }).join('');
         lucide.createIcons();
@@ -555,95 +538,13 @@ async function loadJobs() {
 }
 
 
-const btnStartHunter = document.getElementById('btn-start-hunter');
-const btnStopHunter = document.getElementById('btn-stop-hunter');
-const hunterTerminal = document.getElementById('hunter-terminal-output');
-const hunterTerminalWrap = document.getElementById('hunter-terminal-wrap');
-
-let hunterLogPollInterval = null;
-
-if (btnStartHunter) {
-    btnStartHunter.addEventListener('click', async () => {
-        try {
-            const res = await apiFetch(`/api/hunter/start`, { method: 'POST' });
-            const data = await res.json();
-            if (data.status === 'running') {
-                showToast('O Hunter já está rodando!', 'info');
-                return;
-            }
-            showToast('Email Hunter iniciado! 🎯', 'success');
-            setHunterRunning(true);
-            startHunterLogPolling();
-        } catch (err) {}
-    });
-}
-
-if (btnStopHunter) {
-    btnStopHunter.addEventListener('click', async () => {
-        try {
-            await apiFetch(`/api/hunter/stop`, { method: 'POST' });
-            showToast('Email Hunter parado.', 'info');
-            setHunterRunning(false);
-            stopHunterLogPolling();
-        } catch (err) {}
-    });
-}
-
-function setHunterRunning(running) {
-    if (btnStartHunter) {
-        btnStartHunter.disabled = running;
-        if(running) btnStartHunter.classList.add('hidden');
-        else btnStartHunter.classList.remove('hidden');
-    }
-    if (btnStopHunter) {
-        btnStopHunter.disabled = !running;
-        if(running) btnStopHunter.classList.remove('hidden');
-        else btnStopHunter.classList.add('hidden');
-    }
-    if(running) hunterTerminalWrap.classList.remove('hidden');
-}
-
-function startHunterLogPolling() {
-    if (hunterTerminal) hunterTerminal.textContent = '';
-    if (hunterLogPollInterval) clearInterval(hunterLogPollInterval);
-
-    hunterLogPollInterval = setInterval(async () => {
-        try {
-            const [logRes, statusRes] = await Promise.all([
-                apiFetch(`/api/hunter/logs`),
-                apiFetch(`/api/hunter/status`)
-            ]);
-            const logData = await logRes.json();
-            const statusData = await statusRes.json();
-
-            const cleanLog = (logData.log || '').replace(/\x1b\[[0-9;]*m/g, '');
-            if (hunterTerminal) {
-                hunterTerminal.textContent = cleanLog || 'Aguardando saída do bot hunter...';
-                hunterTerminal.parentElement.scrollTop = hunterTerminal.parentElement.scrollHeight;
-            }
-
-            if (!statusData.running) {
-                setHunterRunning(false);
-                stopHunterLogPolling();
-                showToast('Caçada concluída.', 'success');
-                loadHunterLeads();
-            }
-        } catch (err) {}
-    }, 1500);
-}
-
-function stopHunterLogPolling() {
-    if (hunterLogPollInterval) {
-        clearInterval(hunterLogPollInterval);
-        hunterLogPollInterval = null;
-    }
-}
-
 async function loadHunterLeads() {
     try {
         const res = await apiFetch(`/api/hunter/leads`);
         const data = await res.json();
         const leads = data.leads || [];
+
+        window.currentLeads = leads;
 
         const countEl = document.getElementById('hunter-leads-count');
         if (countEl) countEl.textContent = leads.length;
@@ -652,50 +553,45 @@ async function loadHunterLeads() {
         if (!tbody) return;
 
         if (leads.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="p-8 text-center text-slate-500">Nenhum lead capturado.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="6" class="p-8 text-center text-slate-500">Nenhum lead capturado.</td></tr>';
             return;
         }
 
         tbody.innerHTML = leads.map(lead => {
             const email = lead.email_contato || lead.email || '—';
             const statusHtml = lead.status === 'applied' 
-                ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">Enviado</span>' 
+                ? '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><i data-lucide="check" class="w-3 h-3"></i> Enviado</span>' 
                 : lead.status === 'failed' 
-                ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20">Falhou</span>' 
-                : '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">Pendente</span>';
+                ? '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-rose-500/10 text-rose-400 border border-rose-500/20"><i data-lucide="x" class="w-3 h-3"></i> Falhou</span>' 
+                : '<span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20"><i data-lucide="clock" class="w-3 h-3"></i> Pendente</span>';
                 
             const isApi = (lead.fonte || '').toLowerCase().includes('api');
-            const badge = isApi ? '<span class="inline-flex ml-2 items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">API</span>' 
-                                : '<span class="inline-flex ml-2 items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">Web Scrape</span>';
+            const isManual = (lead.fonte || '').toLowerCase().includes('manual');
+            const badge = isApi ? '<span class="inline-flex ml-2 items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">API</span>' 
+                        : isManual ? '<span class="inline-flex ml-2 items-center px-2 py-0.5 rounded-full text-xs font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20">Manual</span>'
+                        : '<span class="inline-flex ml-2 items-center px-2 py-0.5 rounded-full text-xs font-medium bg-slate-500/10 text-slate-400 border border-slate-500/20">Web Scrape</span>';
+            
             return `<tr class="hover:bg-slate-800/30 transition-colors">
                 <td class="p-4 text-white font-medium">${lead.empresa || ''}</td>
                 <td class="p-4 text-indigo-300 text-xs font-mono">${email}</td>
                 <td class="p-4 text-slate-400 text-sm">${lead.cargo_da_vaga || lead.vaga || '—'}</td>
+                <td class="p-4 text-slate-400 text-xs font-semibold">${lead.fonte || 'Manual'}</td>
                 <td class="p-4 flex items-center">${statusHtml} ${badge}</td>
+                <td class="p-4 text-right">
+                    <div class="flex justify-end gap-1.5">
+                        <button onclick="openLeadModal(${lead.id})" class="text-indigo-400 hover:text-indigo-300 p-1.5 rounded-lg hover:bg-slate-800/60 transition-colors" title="Editar Lead">
+                            <i data-lucide="edit-2" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="deleteLead(${lead.id})" class="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-slate-800/60 transition-colors" title="Excluir Lead">
+                            <i data-lucide="trash-2" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                </td>
             </tr>`;
         }).join('');
+        lucide.createIcons();
     } catch (err) {}
 }
-
-const btnApplyLeads = document.getElementById('btn-apply-leads');
-if (btnApplyLeads) {
-    btnApplyLeads.addEventListener('click', async () => {
-        try {
-            const res = await apiFetch(`/api/leads/apply`, { method: 'POST' });
-            const data = await res.json();
-            if (data.status === 'running') {
-                showToast(data.message, 'info');
-                return;
-            }
-            showToast(data.message, 'success');
-            document.querySelector('[data-target="control"]').click();
-            checkBotStatus();
-        } catch (err) {
-            showToast('Erro ao iniciar disparos', 'error');
-        }
-    });
-}
-
 
 // ═══════════════════════════════════════════════════════════════════
 //  SETTINGS & FILE UPLOAD
@@ -718,6 +614,19 @@ async function loadConfig() {
             document.getElementById('upload-text').textContent = `📎 ${cfg.resume_pdf}`;
             document.getElementById('upload-zone').classList.add('border-indigo-500', 'bg-indigo-500/5');
         }
+
+        window.currentKeywords = (cfg.job_categories || '')
+            .split(',')
+            .map(k => k.trim())
+            .filter(k => k.length > 0);
+
+        window.currentCities = (cfg.presencial_cities || '')
+            .split(',')
+            .map(c => c.trim())
+            .filter(c => c.length > 0);
+
+        window.renderTags('keyword');
+        window.renderTags('city');
     } catch (err) {}
 }
 
@@ -731,6 +640,8 @@ document.getElementById('btn-save-config').addEventListener('click', async () =>
         candidate_name: document.getElementById('cfg-name').value,
         resume_pdf: document.getElementById('upload-text').textContent.replace('📎 ', '').trim(),
         personalize_only_emails: document.getElementById('cfg-personalize-emails').checked,
+        job_categories: window.currentKeywords.join(', '),
+        presencial_cities: window.currentCities.join(', '),
     };
 
     try {
@@ -818,25 +729,251 @@ async function checkBotStatus() {
     } catch (err) {}
 }
 
-async function checkHunterStatus() {
-    try {
-        const res = await apiFetch(`/api/hunter/status`);
-        const data = await res.json();
-        if (data.running) {
-            setHunterRunning(true);
-            startHunterLogPolling();
+// ═══════════════════════════════════════════════════════════════════
+//  CRM LEAD MODAL & OPERATIONS
+// ═══════════════════════════════════════════════════════════════════
+
+window.openLeadModal = function(leadId = null) {
+    const modal = document.getElementById('lead-modal');
+    const title = document.getElementById('lead-modal-title');
+    const form = document.getElementById('lead-form');
+    
+    if (leadId) {
+        title.innerHTML = '<i data-lucide="edit-3" class="w-5 h-5 text-indigo-400"></i> Editar Lead';
+        const lead = window.currentLeads.find(l => l.id === leadId);
+        if (lead) {
+            document.getElementById('lead-id').value = lead.id;
+            document.getElementById('lead-empresa').value = lead.empresa || '';
+            document.getElementById('lead-email').value = lead.email_contato || lead.email || '';
+            document.getElementById('lead-cargo').value = lead.cargo_da_vaga || lead.vaga || '';
+            document.getElementById('lead-site').value = lead.site || '';
+            document.getElementById('lead-status').value = lead.status || 'pending';
+            document.getElementById('lead-fonte').value = lead.fonte || 'Manual';
         }
-    } catch (err) {}
+    } else {
+        title.innerHTML = '<i data-lucide="plus" class="w-5 h-5 text-indigo-400"></i> Adicionar Lead';
+        form.reset();
+        document.getElementById('lead-id').value = '';
+        document.getElementById('lead-status').value = 'pending';
+        document.getElementById('lead-fonte').value = 'Manual';
+    }
+    
+    modal.classList.remove('hidden');
+    void modal.offsetWidth; // Force reflow
+    modal.classList.remove('opacity-0');
+    modal.querySelector('.glass').classList.remove('scale-95');
+    lucide.createIcons();
 }
 
-// Start
-if (authToken) {
-    // Validate token visually
-    apiFetch('/api/bot-status').then(() => {
-        showDashboardScreen();
-    }).catch(() => {
-        showLoginScreen();
-    });
-} else {
-    showLoginScreen();
+window.closeLeadModal = function() {
+    const modal = document.getElementById('lead-modal');
+    modal.classList.add('opacity-0');
+    modal.querySelector('.glass').classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+        document.getElementById('lead-form').reset();
+        document.getElementById('lead-id').value = '';
+    }, 300);
 }
+
+window.saveLead = async function() {
+    const id = document.getElementById('lead-id').value;
+    const empresa = document.getElementById('lead-empresa').value.trim();
+    const email = document.getElementById('lead-email').value.trim();
+    const cargo_da_vaga = document.getElementById('lead-cargo').value.trim();
+    const site = document.getElementById('lead-site').value.trim();
+    const status = document.getElementById('lead-status').value;
+    const fonte = document.getElementById('lead-fonte').value;
+    
+    if (!empresa || !email || !cargo_da_vaga) {
+        showToast('Preencha todos os campos obrigatórios (*).', 'error');
+        return;
+    }
+    
+    const payload = { empresa, email, cargo_da_vaga, site, status, fonte };
+    
+    try {
+        let res;
+        if (id) {
+            res = await apiFetch(`/api/leads/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        } else {
+            res = await apiFetch(`/api/leads`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+        }
+        
+        const data = await res.json();
+        if (res.ok && data.status !== 'error') {
+            showToast(data.message || 'Lead salvo com sucesso!', 'success');
+            closeLeadModal();
+            loadHunterLeads();
+            loadDashboard(); // Refresh stats/charts
+        } else {
+            showToast(data.message || 'Erro ao salvar o lead.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro de comunicação com o servidor.', 'error');
+    }
+}
+
+window.deleteLead = async function(leadId) {
+    if (!confirm('Deseja realmente excluir este lead permanentemente?')) return;
+    
+    try {
+        const res = await apiFetch(`/api/leads/${leadId}`, {
+            method: 'DELETE'
+        });
+        const data = await res.json();
+        
+        if (res.ok && data.status !== 'error') {
+            showToast(data.message || 'Lead excluído com sucesso!', 'success');
+            loadHunterLeads();
+            loadDashboard(); // Refresh stats/charts
+        } else {
+            showToast(data.message || 'Erro ao excluir o lead.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro ao remover lead.', 'error');
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  PDF LIVE PREVIEWER
+// ═══════════════════════════════════════════════════════════════════
+
+window.openPdfPreview = function(filename) {
+    if (!filename) {
+        showToast('Currículo não disponível para este registro.', 'info');
+        return;
+    }
+    const modal = document.getElementById('pdf-modal');
+    const iframe = document.getElementById('pdf-viewer-frame');
+    iframe.src = `/cvs/${encodeURIComponent(filename)}`;
+    
+    modal.classList.remove('hidden');
+    void modal.offsetWidth; // Force reflow
+    modal.classList.remove('opacity-0');
+    modal.querySelector('.glass').classList.remove('scale-95');
+    lucide.createIcons();
+}
+
+window.closePdfPreview = function() {
+    const modal = document.getElementById('pdf-modal');
+    const iframe = document.getElementById('pdf-viewer-frame');
+    modal.classList.add('opacity-0');
+    modal.querySelector('.glass').classList.add('scale-95');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+        iframe.src = '';
+    }, 300);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  DYNAMIC SEARCH FILTERS & KEYWORDS (TAG MANAGER)
+// ═══════════════════════════════════════════════════════════════════
+
+window.currentKeywords = [];
+window.currentCities = [];
+
+window.renderTags = function(type) {
+    if (type === 'keyword') {
+        const container = document.getElementById('keywords-tags-container');
+        if (!container) return;
+        if (window.currentKeywords.length === 0) {
+            container.innerHTML = '<span class="text-xs text-slate-500 italic p-1">Nenhuma palavra-chave cadastrada.</span>';
+            return;
+        }
+        container.innerHTML = window.currentKeywords.map((kw, index) => {
+            return `<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/25 transition-all hover:bg-indigo-500/20">
+                ${kw}
+                <button type="button" onclick="removeSearchTag('keyword', ${index})" class="text-indigo-400 hover:text-indigo-200 transition-colors focus:outline-none">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </span>`;
+        }).join('');
+    } else if (type === 'city') {
+        const container = document.getElementById('cities-tags-container');
+        if (!container) return;
+        if (window.currentCities.length === 0) {
+            container.innerHTML = '<span class="text-xs text-slate-500 italic p-1">Nenhuma cidade cadastrada.</span>';
+            return;
+        }
+        container.innerHTML = window.currentCities.map((city, index) => {
+            return `<span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-300 border border-emerald-500/25 transition-all hover:bg-emerald-500/20">
+                ${city}
+                <button type="button" onclick="removeSearchTag('city', ${index})" class="text-emerald-400 hover:text-emerald-200 transition-colors focus:outline-none">
+                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                </button>
+            </span>`;
+        }).join('');
+    }
+    lucide.createIcons();
+}
+
+window.addSearchTag = function(type) {
+    if (type === 'keyword') {
+        const input = document.getElementById('new-tag-keyword');
+        if (!input) return;
+        const val = input.value.trim();
+        if (!val) return;
+        
+        const parts = val.split(',').map(p => p.trim()).filter(p => p.length > 0);
+        parts.forEach(part => {
+            if (!window.currentKeywords.includes(part)) {
+                window.currentKeywords.push(part);
+            }
+        });
+        
+        input.value = '';
+        window.renderTags('keyword');
+    } else if (type === 'city') {
+        const input = document.getElementById('new-tag-city');
+        if (!input) return;
+        const val = input.value.trim();
+        if (!val) return;
+        
+        const parts = val.split(',').map(p => p.trim()).filter(p => p.length > 0);
+        parts.forEach(part => {
+            if (!window.currentCities.includes(part)) {
+                window.currentCities.push(part);
+            }
+        });
+        
+        input.value = '';
+        window.renderTags('city');
+    }
+}
+
+window.removeSearchTag = function(type, index) {
+    if (type === 'keyword') {
+        window.currentKeywords.splice(index, 1);
+        window.renderTags('keyword');
+    } else if (type === 'city') {
+        window.currentCities.splice(index, 1);
+        window.renderTags('city');
+    }
+}
+
+// Hook keydown events for Enter key
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('new-tag-keyword')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            window.addSearchTag('keyword');
+        }
+    });
+    document.getElementById('new-tag-city')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            window.addSearchTag('city');
+        }
+    });
+});
+
+bootDashboard();

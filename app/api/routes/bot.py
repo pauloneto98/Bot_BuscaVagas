@@ -1,6 +1,6 @@
 """
 Bot Control Routes — /api/start, /api/stop, /api/bot-status, /api/logs
-Manages the main job application bot subprocess.
+Execução unificada: opcionalmente busca leads, depois aplica candidaturas.
 """
 
 import os
@@ -13,16 +13,15 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.api.dependencies import verify_token
-
 router = APIRouter()
 
-# ── Process State ──────────────────────────────────────────────────
 _bot_process: subprocess.Popen | None = None
 _bot_lock = threading.Lock()
 
 
 class BotStartPayload(BaseModel):
-    mode: str = "full"  # full | teste | manual
+    mode: str = "full"  # full | teste
+    hunt_leads_first: bool = False
 
 
 @router.post("/api/start", dependencies=[Depends(verify_token)])
@@ -36,11 +35,11 @@ def start_bot(payload: BotStartPayload):
         with open(log_file, "w", encoding="utf-8") as f:
             f.write("")
 
-        cmd = [sys.executable, os.path.join(settings.BASE_DIR, "main.py")]
+        cmd = [sys.executable, "-m", "app.services.run_once"]
+        if payload.hunt_leads_first and payload.mode != "teste":
+            cmd.append("--hunt-leads")
         if payload.mode == "teste":
             cmd.append("--teste")
-        elif payload.mode == "manual":
-            cmd.append("--manual")
 
         _bot_process = subprocess.Popen(
             cmd,
@@ -80,7 +79,6 @@ def bot_status():
 
 @router.get("/api/logs", dependencies=[Depends(verify_token)])
 def get_logs():
-    """Return bot log contents for the live terminal."""
     log_file = settings.LOG_FILE
     if not os.path.exists(log_file):
         return {"log": ""}

@@ -96,11 +96,12 @@ python web_server.py
 
 | Mode | Command | Description |
 |------|---------|-------------|
-| **Full Auto** | `python main.py` | Scrape + analyze + apply |
-| **Test** | `python main.py --teste` | Single mock job, no email sent |
-| **Manual** | `python main.py --manual` | Apply to pending DB leads |
+| **Execução única** | `python main.py` | Leads pendentes + busca de vagas + candidaturas |
+| **Com busca de leads** | `python -m app.services.run_once --hunt-leads` | Hunter + candidaturas (mesmo fluxo do dashboard) |
+| **Test** | `python main.py --teste` | Vaga mock, gera PDF sem enviar e-mail |
+| **Piloto 24/7** | `python -m app.services.scheduler` | Ciclos contínuos (hunter + candidaturas) |
 | **Validate** | `python main.py --validar` | Check all API keys and configs |
-| **Dashboard** | `python web_server.py` | Web UI with full control |
+| **Dashboard** | `python web_server.py` | Painel unificado (execução única + piloto 24/7) |
 
 ## Configuration
 

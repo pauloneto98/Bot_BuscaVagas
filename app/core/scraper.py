@@ -1,6 +1,10 @@
 """
-Módulo de Busca de Vagas — v4 (International Job Boards)
-Busca vagas via Google/DuckDuckGo + Wellfound, Remote OK, We Work Remotely.
+Módulo de Busca de Vagas — v5 (BR + Internacional)
+Busca vagas em fontes nativas BR + internacionais com filtro rígido de localidade.
+
+Fontes BR: Gupy RSS, Vagas.com.br, Remotive API, Programathor, GeekHunter, Remotar, Trampos.co
+Fontes internacionais: RemoteOK, WeWorkRemotely, Wellfound, Google, DuckDuckGo
+Filtro: presencial apenas Recife/Jaboatão/Olinda; remoto para qualquer localidade.
 """
 
 import os
@@ -29,6 +33,9 @@ JOB_CATEGORIES_PT = [
     "analista de dados",
     "suporte de TI",
     "help desk",
+    "desenvolvedor python",
+    "desenvolvedor web",
+    "analista de sistemas",
 ]
 
 JOB_CATEGORIES_EN = [
@@ -36,14 +43,14 @@ JOB_CATEGORIES_EN = [
     "data analyst",
     "IT support",
     "QA engineer",
+    "python developer",
 ]
 
-LOCATIONS_REMOTE = ["remoto Brasil"]
-LOCATIONS_PRESENCIAL = ["Recife PE", "Olinda PE", "Jaboatão dos Guararapes PE", "Cabo de Santo Agostinho PE"]
-LOCATIONS_PORTUGAL = ["Portugal"]
+# ── Localidade ────────────────────────────────────────────────────
+PRESENCIAL_ALLOWED = [c.lower() for c in settings.PRESENCIAL_CITIES]
 
-DELAY_MIN = float(settings.REQUEST_DELAY_MIN) if settings.REQUEST_DELAY_MIN else 0.3
-DELAY_MAX = float(settings.REQUEST_DELAY_MAX) if settings.REQUEST_DELAY_MAX else 0.8
+DELAY_MIN = float(settings.REQUEST_DELAY_MIN) if settings.REQUEST_DELAY_MIN else 0.5
+DELAY_MAX = float(settings.REQUEST_DELAY_MAX) if settings.REQUEST_DELAY_MAX else 1.5
 
 BLOCK_SIGNALS = [
     "captcha", "robot", "automated", "please verify",
@@ -57,6 +64,15 @@ _stats = {
     "remoteok": {"ok": 0, "blocked": 0, "error": 0},
     "weworkremotely": {"ok": 0, "blocked": 0, "error": 0},
     "wellfound": {"ok": 0, "blocked": 0, "error": 0},
+    "gupy": {"ok": 0, "blocked": 0, "error": 0},
+    "vagascom": {"ok": 0, "blocked": 0, "error": 0},
+    "remotive": {"ok": 0, "blocked": 0, "error": 0},
+    "programathor": {"ok": 0, "blocked": 0, "error": 0},
+    "geekhunter": {"ok": 0, "blocked": 0, "error": 0},
+    "remotar": {"ok": 0, "blocked": 0, "error": 0},
+    "trampos": {"ok": 0, "blocked": 0, "error": 0},
+    "adzuna": {"ok": 0, "blocked": 0, "error": 0},
+    "jsearch": {"ok": 0, "blocked": 0, "error": 0},
 }
 
 
@@ -95,9 +111,12 @@ def _is_blocked(response):
     return any(sig in text_lower for sig in BLOCK_SIGNALS)
 
 
-def _safe_get(url, params=None, timeout=8, source=""):
+def _safe_get(url, params=None, timeout=10, source="", json=False):
     try:
-        response = requests.get(url, params=params, headers=_get_headers(), timeout=timeout)
+        headers = _get_headers()
+        if json:
+            headers["Accept"] = "application/json"
+        response = requests.get(url, params=params, headers=headers, timeout=timeout)
         if _is_blocked(response):
             if source and source in _stats:
                 _stats[source]["blocked"] += 1
@@ -116,8 +135,668 @@ def _log(msg):
     sys.stdout.flush()
 
 
+def _extract_email_from_text(text: str) -> str:
+    """Extrai o primeiro email encontrado no texto da vaga."""
+    if not text:
+        return ""
+    emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+    # Filtrar emails genéricos de plataformas
+    blocked_domains = ["gupy.io", "indeed.com", "linkedin.com", "glassdoor.com", "catho.com.br", "noreply", "no-reply", "vagas.com"]
+    for email in emails:
+        email_lower = email.lower()
+        if not any(blocked in email_lower for blocked in blocked_domains):
+            return email_lower
+    return ""
+
+
 # ═══════════════════════════════════════════════════════════════════════
-#  GOOGLE SEARCH
+#  FILTRO DE LOCALIDADE
+# ═══════════════════════════════════════════════════════════════════════
+
+REMOTE_KEYWORDS = ["remoto", "remote", "home office", "homeoffice", "home-office", "híbrido", "hibrido", "hybrid"]
+UNDEFINED_LOCATIONS = ["brasil", "brazil", "", "não informado", "nao informado", "nacional", "qualquer lugar"]
+
+
+def _is_location_allowed(job: dict) -> bool:
+    """
+    Retorna True se a vaga pode ser candidatada:
+    - Vagas remotas/híbridas: SEMPRE aceitas
+    - Vagas presenciais: apenas Recife, Jaboatão dos Guararapes e Olinda
+    - Vagas sem localidade definida: aceitas (serão avaliadas depois)
+    """
+    local = job.get("local", "").lower().strip()
+    modalidade = job.get("modalidade", "").lower().strip()
+    titulo = job.get("titulo", "").lower()
+    descricao = job.get("descricao", "").lower()
+
+    # Checar se é remoto/híbrido em qualquer campo
+    all_text = f"{local} {modalidade} {titulo} {descricao[:200]}"
+    if any(k in all_text for k in REMOTE_KEYWORDS):
+        return True
+
+    # Localidade indefinida — aceitar (sem informação)
+    if local in UNDEFINED_LOCATIONS or not local:
+        return settings.ACCEPT_UNDEFINED_LOCATION
+
+    # Presencial — verificar cidade
+    for city in PRESENCIAL_ALLOWED:
+        if city in local:
+            return True
+
+    # Bloquear outras cidades presenciais
+    return False
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  SCRAPERS BR NATIVOS
+# ═══════════════════════════════════════════════════════════════════════
+
+def _search_gupy_rss(query: str) -> list:
+    """
+    Busca vagas no Gupy via RSS/sitemap.
+    Usa busca DuckDuckGo focada em gupy.io como fallback.
+    """
+    jobs = []
+    try:
+        # Tentativa direta via DuckDuckGo site:gupy.io
+        ddg_url = "https://html.duckduckgo.com/html/"
+        search_terms = [
+            f"site:gupy.io {query}",
+            f"site:gupy.io/jobs {query} remoto",
+        ]
+        for term in search_terms:
+            params = {"q": term}
+            response = requests.post(ddg_url, data=params, headers=_get_headers(), timeout=10)
+            if not response or response.status_code != 200:
+                continue
+
+            soup = BeautifulSoup(response.text, "lxml")
+            for result in soup.find_all("div", class_="result"):
+                title_tag = result.find("a", class_="result__a")
+                snippet_tag = result.find("a", class_="result__snippet")
+                if not title_tag:
+                    continue
+
+                href = title_tag.get("href", "")
+                if "gupy.io" not in href:
+                    continue
+
+                title_text = _clean_text(title_tag.get_text())
+                snippet_text = _clean_text(snippet_tag.get_text()) if snippet_tag else ""
+
+                # Extrair empresa da URL (formato: empresa.gupy.io)
+                empresa = ""
+                m = re.search(r"https?://([^.]+)\.gupy\.io", href)
+                if m:
+                    empresa = m.group(1).replace("-", " ").title()
+
+                if not empresa:
+                    empresa = _extract_company_from_result(title_text, snippet_text, href)
+
+                titulo = _clean_title_gupy(title_text)
+                local = _extract_location(snippet_text + " " + title_text)
+
+                if titulo:
+                    jobs.append({
+                        "titulo": titulo,
+                        "empresa": empresa or "Empresa no Gupy",
+                        "local": local,
+                        "modalidade": _detect_modalidade(title_text + " " + snippet_text),
+                        "url": href,
+                        "descricao": snippet_text,
+                        "fonte": "Gupy",
+                    })
+                if len(jobs) >= 10:
+                    break
+
+            _random_delay(0.5, 1)
+            if len(jobs) >= 8:
+                break
+
+        _stats["gupy"]["ok"] += 1 if jobs else 0
+    except Exception as e:
+        _stats["gupy"]["error"] += 1
+    return jobs
+
+
+def _clean_title_gupy(title: str) -> str:
+    """Remove sufixos de sites do título."""
+    title = re.sub(r"\s*[-–|]\s*Gupy.*$", "", title, flags=re.I)
+    title = re.sub(r"\s*[-–|]\s*vagas?.*$", "", title, flags=re.I)
+    return title.strip()
+
+
+def _detect_modalidade(text: str) -> str:
+    t = text.lower()
+    if any(k in t for k in ["híbrido", "hibrido", "hybrid"]):
+        return "híbrido"
+    if any(k in t for k in ["remoto", "remote", "home office"]):
+        return "remoto"
+    if "presencial" in t:
+        return "presencial"
+    return ""
+
+
+def _search_vagascom(query: str) -> list:
+    """Busca vagas no Vagas.com.br via scraping HTML."""
+    jobs = []
+    try:
+        # Vagas.com.br usa URL pattern: /empregos/cargo-empresa-cidade
+        query_slug = query.lower().replace(" ", "-")
+        urls_to_try = [
+            f"https://www.vagas.com.br/empregos/{query_slug}",
+            f"https://www.vagas.com.br/vagas-de-{query_slug}",
+        ]
+
+        for url in urls_to_try:
+            response = _safe_get(url, timeout=10, source="vagascom")
+            if not response:
+                continue
+
+            soup = BeautifulSoup(response.text, "lxml")
+
+            # Vagas.com.br lista vagas em elementos com class "job"
+            job_items = (
+                soup.find_all("li", class_=lambda c: c and "job" in c.lower()) or
+                soup.find_all("article", class_=lambda c: c and "job" in c.lower()) or
+                soup.find_all("div", class_=lambda c: c and ("vaga" in c.lower() or "job" in c.lower()))
+            )
+
+            for item in job_items:
+                title_tag = item.find(["h2", "h3", "a"], class_=lambda c: c and ("title" in (c or "").lower() or "vaga" in (c or "").lower()))
+                if not title_tag:
+                    title_tag = item.find(["h2", "h3"])
+                if not title_tag:
+                    continue
+
+                titulo = _clean_text(title_tag.get_text())
+                if not titulo:
+                    continue
+
+                link_tag = item.find("a", href=True)
+                href = ""
+                if link_tag:
+                    href = link_tag.get("href", "")
+                    if href.startswith("/"):
+                        href = "https://www.vagas.com.br" + href
+
+                empresa_tag = item.find(class_=lambda c: c and ("company" in (c or "").lower() or "empresa" in (c or "").lower()))
+                empresa = _clean_text(empresa_tag.get_text()) if empresa_tag else ""
+
+                local_tag = item.find(class_=lambda c: c and ("location" in (c or "").lower() or "local" in (c or "").lower() or "cidade" in (c or "").lower()))
+                local = _clean_text(local_tag.get_text()) if local_tag else "Brasil"
+
+                jobs.append({
+                    "titulo": titulo,
+                    "empresa": empresa or "Empresa no Vagas.com.br",
+                    "local": local,
+                    "modalidade": _detect_modalidade(titulo + " " + local),
+                    "url": href,
+                    "descricao": f"Vaga de {titulo} em {local} via Vagas.com.br",
+                    "fonte": "Vagas.com.br",
+                })
+
+                if len(jobs) >= 10:
+                    break
+
+            if len(jobs) >= 5:
+                break
+
+    except Exception:
+        _stats["vagascom"]["error"] += 1
+    return jobs
+
+
+def _search_remotive(query: str) -> list:
+    """
+    Busca vagas remotas no Remotive via API JSON pública.
+    API gratuita sem autenticação: https://remotive.com/api/remote-jobs
+    """
+    jobs = []
+    try:
+        url = "https://remotive.com/api/remote-jobs"
+        params = {"search": query, "limit": 20}
+        response = _safe_get(url, params=params, timeout=12, source="remotive", json=True)
+        if not response:
+            return jobs
+
+        data = response.json()
+        job_list = data.get("jobs", [])
+
+        for item in job_list:
+            titulo = item.get("title", "")
+            empresa = item.get("company_name", "Unknown")
+            local = item.get("candidate_required_location", "Remote")
+            url_vaga = item.get("url", "")
+            descricao_html = item.get("description", "")
+            descricao = _clean_text(BeautifulSoup(descricao_html, "lxml").get_text())[:500]
+
+            jobs.append({
+                "titulo": titulo,
+                "empresa": empresa,
+                "local": local or "Remote",
+                "modalidade": "remoto",
+                "url": url_vaga,
+                "descricao": descricao,
+                "fonte": "Remotive",
+            })
+
+            if len(jobs) >= 10:
+                break
+
+        _stats["remotive"]["ok"] += 1
+    except Exception:
+        _stats["remotive"]["error"] += 1
+    return jobs
+
+
+def _search_programathor(query: str) -> list:
+    """Busca vagas de desenvolvimento no Programathor via scraping."""
+    jobs = []
+    try:
+        query_slug = query.lower().replace(" ", "+")
+        url = f"https://programathor.com.br/jobs?search={query_slug}"
+        response = _safe_get(url, timeout=10, source="programathor")
+        if not response:
+            return jobs
+
+        soup = BeautifulSoup(response.text, "lxml")
+
+        # Programathor lista vagas em cards
+        cards = (
+            soup.find_all("div", class_=lambda c: c and "job" in (c or "").lower()) or
+            soup.find_all("article") or
+            soup.find_all("div", class_=lambda c: c and "card" in (c or "").lower())
+        )
+
+        for card in cards:
+            title_tag = card.find(["h2", "h3", "h4", "a"])
+            if not title_tag:
+                continue
+
+            titulo = _clean_text(title_tag.get_text())
+            if len(titulo) < 5:
+                continue
+
+            link_tag = card.find("a", href=True)
+            href = ""
+            if link_tag:
+                href = link_tag.get("href", "")
+                if href.startswith("/"):
+                    href = "https://programathor.com.br" + href
+
+            # Empresa
+            empresa_candidates = card.find_all(["span", "p", "div"])
+            empresa = ""
+            for ec in empresa_candidates:
+                text = _clean_text(ec.get_text())
+                if text and len(text) > 2 and len(text) < 60 and text != titulo:
+                    empresa = text
+                    break
+
+            local_text = _clean_text(card.get_text())
+            local = _extract_location(local_text)
+
+            jobs.append({
+                "titulo": titulo,
+                "empresa": empresa or "Empresa no Programathor",
+                "local": local,
+                "modalidade": _detect_modalidade(local_text),
+                "url": href,
+                "descricao": f"Vaga de {titulo} via Programathor",
+                "fonte": "Programathor",
+            })
+
+            if len(jobs) >= 8:
+                break
+
+    except Exception:
+        _stats["programathor"]["error"] += 1
+    return jobs
+
+
+def _search_geekhunter(query: str) -> list:
+    """Busca vagas de dev no GeekHunter via scraping HTML."""
+    jobs = []
+    try:
+        query_slug = query.lower().replace(" ", "-")
+        urls_to_try = [
+            f"https://www.geekhunter.com.br/vagas?search={query.replace(' ', '+')}",
+            "https://www.geekhunter.com.br/vagas",
+        ]
+
+        for url in urls_to_try:
+            response = _safe_get(url, timeout=10, source="geekhunter")
+            if not response:
+                continue
+
+            soup = BeautifulSoup(response.text, "lxml")
+
+            job_items = (
+                soup.find_all("div", class_=lambda c: c and "job" in (c or "").lower()) or
+                soup.find_all("li", class_=lambda c: c and "job" in (c or "").lower()) or
+                soup.find_all("article")
+            )
+
+            for item in job_items:
+                title_tag = item.find(["h2", "h3", "h4"])
+                if not title_tag:
+                    continue
+
+                titulo = _clean_text(title_tag.get_text())
+                if not titulo or len(titulo) < 5:
+                    continue
+
+                link_tag = item.find("a", href=True)
+                href = ""
+                if link_tag:
+                    href = link_tag.get("href", "")
+                    if href.startswith("/"):
+                        href = "https://www.geekhunter.com.br" + href
+
+                local_text = _clean_text(item.get_text())
+                local = _extract_location(local_text)
+
+                jobs.append({
+                    "titulo": titulo,
+                    "empresa": "Empresa no GeekHunter",
+                    "local": local,
+                    "modalidade": _detect_modalidade(local_text),
+                    "url": href,
+                    "descricao": f"Vaga de {titulo} via GeekHunter",
+                    "fonte": "GeekHunter",
+                })
+
+                if len(jobs) >= 8:
+                    break
+
+            if jobs:
+                break
+
+    except Exception:
+        _stats["geekhunter"]["error"] += 1
+    return jobs
+
+
+def _search_remotar(query: str) -> list:
+    """Busca vagas 100% remotas no Remotar.com.br."""
+    jobs = []
+    try:
+        url = "https://remotar.com.br/jobs"
+        response = _safe_get(url, timeout=10, source="remotar")
+        if not response:
+            return jobs
+
+        soup = BeautifulSoup(response.text, "lxml")
+        query_words = query.lower().split()
+
+        job_items = (
+            soup.find_all("div", class_=lambda c: c and "job" in (c or "").lower()) or
+            soup.find_all("article") or
+            soup.find_all("li")
+        )
+
+        for item in job_items:
+            item_text = item.get_text().lower()
+            if not any(w in item_text for w in query_words[:2]):
+                continue
+
+            title_tag = item.find(["h2", "h3", "h4", "a"])
+            if not title_tag:
+                continue
+
+            titulo = _clean_text(title_tag.get_text())
+            if not titulo or len(titulo) < 5:
+                continue
+
+            link_tag = item.find("a", href=True)
+            href = ""
+            if link_tag:
+                href = link_tag.get("href", "")
+                if href.startswith("/"):
+                    href = "https://remotar.com.br" + href
+
+            jobs.append({
+                "titulo": titulo,
+                "empresa": "Empresa no Remotar",
+                "local": "Remoto",
+                "modalidade": "remoto",
+                "url": href,
+                "descricao": f"Vaga remota de {titulo} via Remotar.com.br",
+                "fonte": "Remotar",
+            })
+
+            if len(jobs) >= 8:
+                break
+
+    except Exception:
+        _stats["remotar"]["error"] += 1
+    return jobs
+
+
+def _search_trampos(query: str) -> list:
+    """Busca vagas criativas/dev no Trampos.co."""
+    jobs = []
+    try:
+        url = f"https://trampos.co/vagas?s={query.replace(' ', '+')}"
+        response = _safe_get(url, timeout=10, source="trampos")
+        if not response:
+            return jobs
+
+        soup = BeautifulSoup(response.text, "lxml")
+
+        job_items = (
+            soup.find_all("li", class_=lambda c: c and "job" in (c or "").lower()) or
+            soup.find_all("div", class_=lambda c: c and "job" in (c or "").lower()) or
+            soup.find_all("article")
+        )
+
+        for item in job_items:
+            title_tag = item.find(["h2", "h3", "a"])
+            if not title_tag:
+                continue
+
+            titulo = _clean_text(title_tag.get_text())
+            if not titulo or len(titulo) < 5:
+                continue
+
+            link_tag = item.find("a", href=True)
+            href = ""
+            if link_tag:
+                href = link_tag.get("href", "")
+                if href.startswith("/"):
+                    href = "https://trampos.co" + href
+
+            local_text = _clean_text(item.get_text())
+            local = _extract_location(local_text)
+
+            jobs.append({
+                "titulo": titulo,
+                "empresa": "Empresa no Trampos.co",
+                "local": local,
+                "modalidade": _detect_modalidade(local_text),
+                "url": href,
+                "descricao": f"Vaga de {titulo} via Trampos.co",
+                "fonte": "Trampos.co",
+            })
+
+            if len(jobs) >= 8:
+                break
+
+    except Exception:
+        _stats["trampos"]["error"] += 1
+    return jobs
+
+
+def _search_adzuna(query: str) -> list:
+    """
+    Busca vagas na API Adzuna (vagas BR e internacionais remotas).
+    Docs: https://developer.adzuna.com/
+    """
+    jobs = []
+    app_id = settings.ADZUNA_APP_ID
+    app_key = settings.ADZUNA_APP_KEY
+    if not app_id or not app_key:
+        return jobs
+
+    # Buscar vagas no Brasil + remotas internacionais
+    searches = [
+        {"country": "br", "what": query, "where": "", "label": "BR"},
+        {"country": "br", "what": f"{query} remoto", "where": "", "label": "BR Remoto"},
+        {"country": "gb", "what": f"{query} remote", "where": "", "label": "UK Remote"},
+        {"country": "us", "what": f"{query} remote", "where": "", "label": "US Remote"},
+    ]
+
+    for search in searches:
+        try:
+            country = search["country"]
+            url = f"https://api.adzuna.com/v1/api/jobs/{country}/search/1"
+            params = {
+                "app_id": app_id,
+                "app_key": app_key,
+                "results_per_page": 10,
+                "what": search["what"],
+                "content-type": "application/json",
+            }
+            if search["where"]:
+                params["where"] = search["where"]
+
+            response = requests.get(url, params=params, timeout=12)
+            if response.status_code != 200:
+                _stats["adzuna"]["error"] += 1
+                continue
+
+            data = response.json()
+            results = data.get("results", [])
+            _stats["adzuna"]["ok"] += 1
+
+            for item in results:
+                titulo = item.get("title", "")
+                empresa = item.get("company", {}).get("display_name", "Empresa")
+                local = item.get("location", {}).get("display_name", "")
+                descricao = _clean_text(item.get("description", ""))[:500]
+                url_vaga = item.get("redirect_url", "")
+
+                # Extrair email da descrição
+                email_direto = _extract_email_from_text(descricao)
+
+                job_data = {
+                    "titulo": _clean_text(titulo),
+                    "empresa": empresa,
+                    "local": local or ("Remote" if "remote" in search["what"].lower() else "Brasil"),
+                    "modalidade": _detect_modalidade(f"{titulo} {descricao} {local}"),
+                    "url": url_vaga,
+                    "descricao": descricao,
+                    "fonte": f"Adzuna ({search['label']})",
+                }
+                if email_direto:
+                    job_data["email_direto"] = email_direto
+
+                jobs.append(job_data)
+
+                if len(jobs) >= 20:
+                    break
+
+            _random_delay(0.3, 0.6)
+
+        except Exception as e:
+            _stats["adzuna"]["error"] += 1
+            _log(f"  ❌ Adzuna ({search['label']}): {e}")
+
+    return jobs
+
+
+def _search_jsearch(query: str) -> list:
+    """
+    Busca vagas via JSearch (RapidAPI) — vagas locais e remotas.
+    Docs: https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch
+    """
+    jobs = []
+    api_key = settings.RAPIDAPI_KEY
+    if not api_key:
+        return jobs
+
+    # Busca híbrida: presenciais em Recife + remotas BR + remotas exterior
+    searches = [
+        {"query": f"{query} in Recife, Brazil", "label": "Recife"},
+        {"query": f"{query} remote in Brazil", "label": "BR Remoto"},
+        {"query": f"{query} remote", "label": "Global Remoto"},
+    ]
+
+    for search in searches:
+        try:
+            url = "https://jsearch.p.rapidapi.com/search"
+            params = {
+                "query": search["query"],
+                "num_pages": "1",
+                "date_posted": "week",
+            }
+            headers = {
+                "x-rapidapi-host": "jsearch.p.rapidapi.com",
+                "x-rapidapi-key": api_key,
+                "Content-Type": "application/json",
+            }
+
+            response = requests.get(url, params=params, headers=headers, timeout=15)
+            if response.status_code != 200:
+                _stats["jsearch"]["error"] += 1
+                continue
+
+            data = response.json()
+            results = data.get("data", [])
+            _stats["jsearch"]["ok"] += 1
+
+            for item in results:
+                titulo = item.get("job_title", "")
+                empresa = item.get("employer_name", "Empresa")
+                cidade = item.get("job_city", "")
+                estado = item.get("job_state", "")
+                pais = item.get("job_country", "")
+                is_remote = item.get("job_is_remote", False)
+                descricao = _clean_text(item.get("job_description", ""))[:500]
+                url_vaga = item.get("job_apply_link", "") or item.get("job_google_link", "")
+
+                local = ""
+                if is_remote:
+                    local = "Remote"
+                elif cidade:
+                    local = f"{cidade}, {estado}" if estado else cidade
+                    if pais and pais != "BR":
+                        local += f" - {pais}"
+                else:
+                    local = pais or "Brasil"
+
+                # Extrair email da descrição
+                email_direto = _extract_email_from_text(descricao)
+
+                job_data = {
+                    "titulo": _clean_text(titulo),
+                    "empresa": empresa,
+                    "local": local,
+                    "modalidade": "remoto" if is_remote else _detect_modalidade(f"{titulo} {local} {descricao}"),
+                    "url": url_vaga,
+                    "descricao": descricao,
+                    "fonte": f"JSearch ({search['label']})",
+                }
+                if email_direto:
+                    job_data["email_direto"] = email_direto
+
+                jobs.append(job_data)
+
+                if len(jobs) >= 20:
+                    break
+
+            _random_delay(0.5, 1.0)
+
+        except Exception as e:
+            _stats["jsearch"]["error"] += 1
+            _log(f"  ❌ JSearch ({search['label']}): {e}")
+
+    return jobs
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  FONTES INTERNACIONAIS (mantidas do v4)
 # ═══════════════════════════════════════════════════════════════════════
 
 def _search_google_jobs(query):
@@ -148,6 +827,7 @@ def _search_google_jobs(query):
                 jobs.append({
                     "titulo": titulo, "empresa": empresa,
                     "local": _extract_location(snippet_text),
+                    "modalidade": _detect_modalidade(snippet_text + " " + titulo),
                     "url": href if href.startswith("http") else "",
                     "descricao": snippet_text, "fonte": "Google",
                 })
@@ -157,10 +837,6 @@ def _search_google_jobs(query):
         pass
     return jobs
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  DUCKDUCKGO SEARCH
-# ═══════════════════════════════════════════════════════════════════════
 
 def _search_duckduckgo_jobs(query):
     jobs = []
@@ -184,22 +860,23 @@ def _search_duckduckgo_jobs(query):
             empresa = _extract_company_from_result(title_text, snippet_text, href)
             titulo = _extract_job_title(title_text, query)
             if empresa and titulo:
-                jobs.append({
+                email_direto = _extract_email_from_text(snippet_text)
+                job_data = {
                     "titulo": titulo, "empresa": empresa,
                     "local": _extract_location(snippet_text),
+                    "modalidade": _detect_modalidade(snippet_text + " " + titulo),
                     "url": href if href.startswith("http") else "",
                     "descricao": snippet_text, "fonte": "DuckDuckGo",
-                })
+                }
+                if email_direto:
+                    job_data["email_direto"] = email_direto
+                jobs.append(job_data)
             if len(jobs) >= 8:
                 break
     except Exception:
         _stats["duckduckgo"]["error"] += 1
     return jobs
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  REMOTE OK (JSON API)
-# ═══════════════════════════════════════════════════════════════════════
 
 def _search_remoteok(query):
     """Busca vagas no Remote OK via API JSON pública."""
@@ -227,6 +904,7 @@ def _search_remoteok(query):
                 "titulo": item.get("position", ""),
                 "empresa": item.get("company", "Unknown"),
                 "local": item.get("location", "Remote"),
+                "modalidade": "remoto",
                 "url": item.get("url", f"https://remoteok.com/remote-jobs/{item.get('slug', '')}"),
                 "descricao": _clean_text(BeautifulSoup(item.get("description", ""), "lxml").get_text())[:500],
                 "fonte": "RemoteOK",
@@ -237,10 +915,6 @@ def _search_remoteok(query):
         _stats["remoteok"]["error"] += 1
     return jobs
 
-
-# ═══════════════════════════════════════════════════════════════════════
-#  WE WORK REMOTELY (RSS)
-# ═══════════════════════════════════════════════════════════════════════
 
 def _search_weworkremotely(query):
     """Busca vagas no We Work Remotely via RSS feed."""
@@ -269,7 +943,6 @@ def _search_weworkremotely(query):
                 if not any(w in combined for w in query_words):
                     continue
 
-                # Extrair empresa do título (formato: "Company: Job Title")
                 parts = title.split(":", 1)
                 if len(parts) == 2:
                     empresa = parts[0].strip()
@@ -282,7 +955,7 @@ def _search_weworkremotely(query):
 
                 jobs.append({
                     "titulo": titulo, "empresa": empresa,
-                    "local": "Remote",
+                    "local": "Remote", "modalidade": "remoto",
                     "url": link,
                     "descricao": desc_text,
                     "fonte": "WeWorkRemotely",
@@ -297,68 +970,18 @@ def _search_weworkremotely(query):
     return jobs
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  WELLFOUND (via Google site: search)
-# ═══════════════════════════════════════════════════════════════════════
-
 def _search_wellfound(query):
     """Busca vagas no Wellfound via Google site: search (JS-heavy site)."""
     jobs = []
     try:
-        url = "https://www.google.com/search"
-        params = {"q": f"site:wellfound.com/jobs {query} remote", "num": 10}
-        response = _safe_get(url, params=params, timeout=8, source="wellfound")
-        if not response:
-            # Fallback to DuckDuckGo
-            ddg_url = "https://html.duckduckgo.com/html/"
-            ddg_params = {"q": f"site:wellfound.com {query} remote job"}
-            response = requests.post(ddg_url, data=ddg_params, headers=_get_headers(), timeout=8)
-            if not response or response.status_code != 200:
-                return jobs
+        ddg_url = "https://html.duckduckgo.com/html/"
+        ddg_params = {"q": f"site:wellfound.com {query} remote job"}
+        response = requests.post(ddg_url, data=ddg_params, headers=_get_headers(), timeout=8)
+        if not response or response.status_code != 200:
+            return jobs
 
         soup = BeautifulSoup(response.text, "lxml")
 
-        for g in soup.find_all("div", class_="g"):
-            title_tag = g.find("h3")
-            link_tag = g.find("a")
-            snippet_tag = g.find("div", class_="VwiC3b") or g.find("span", class_="st")
-            if not title_tag:
-                continue
-            title_text = _clean_text(title_tag.get_text())
-            href = ""
-            if link_tag:
-                href = link_tag.get("href", "")
-                if href.startswith("/url?q="):
-                    href = href.split("/url?q=")[1].split("&")[0]
-
-            if "wellfound.com" not in href:
-                continue
-
-            snippet_text = _clean_text(snippet_tag.get_text()) if snippet_tag else ""
-
-            # Parse title: usually "Job Title at Company - Wellfound"
-            title_clean = re.sub(r"\s*[-–|]\s*Wellfound.*$", "", title_text, flags=re.I)
-            parts = re.split(r"\s+at\s+", title_clean, maxsplit=1)
-            if len(parts) == 2:
-                titulo = parts[0].strip()
-                empresa = parts[1].strip()
-            else:
-                titulo = title_clean
-                empresa = _extract_company_from_result(title_text, snippet_text, href)
-
-            if titulo:
-                jobs.append({
-                    "titulo": titulo,
-                    "empresa": empresa or "Startup",
-                    "local": "Remote",
-                    "url": href if href.startswith("http") else "",
-                    "descricao": snippet_text,
-                    "fonte": "Wellfound",
-                })
-            if len(jobs) >= 8:
-                break
-
-        # Also try DuckDuckGo results format
         for result in soup.find_all("div", class_="result"):
             title_tag = result.find("a", class_="result__a")
             snippet_tag = result.find("a", class_="result__snippet")
@@ -376,12 +999,13 @@ def _search_wellfound(query):
             if titulo:
                 jobs.append({
                     "titulo": titulo, "empresa": empresa,
-                    "local": "Remote", "url": href,
+                    "local": "Remote", "modalidade": "remoto", "url": href,
                     "descricao": snippet_text, "fonte": "Wellfound",
                 })
             if len(jobs) >= 8:
                 break
 
+        _stats["wellfound"]["ok"] += 1
     except Exception:
         _stats["wellfound"]["error"] += 1
     return jobs
@@ -401,7 +1025,7 @@ _JOB_SITE_PATTERNS = [
     "gupy.io", "catho.com", "infojobs.com", "trabalhabrasil.com",
     "netvagas.com", "empregos.com", "trampos.co", "programathor.com",
     "geekhunter.com", "remotar.com", "wellfound.com", "remoteok.com",
-    "weworkremotely.com", "careers", "vagas", "jobs",
+    "weworkremotely.com", "remotive.com", "careers", "vagas", "jobs",
 ]
 
 
@@ -458,7 +1082,7 @@ def _extract_job_title(title, query):
 def _extract_location(text):
     loc_patterns = [
         r"(Remoto|Remote|Home\s*Office|Híbrido|Hybrid)",
-        r"(Recife|Olinda|Jaboatão dos Guararapes|Cabo de Santo Agostinho|São Paulo|Rio de Janeiro|Belo Horizonte|Porto Alegre|Curitiba|Brasília|Salvador|Fortaleza)",
+        r"(Recife|Olinda|Jaboatão dos Guararapes|Cabo de Santo Agostinho|São Paulo|Rio de Janeiro|Belo Horizonte|Porto Alegre|Curitiba|Brasília|Salvador|Fortaleza|Campinas)",
         r"(Lisboa|Porto|Braga|Coimbra|Portugal)",
         r"([A-Z][a-zà-ú]+(?:\s+(?:do|de|dos|das)\s+[A-Z][a-zà-ú]+)*\s*[-,]\s*[A-Z]{2})",
     ]
@@ -484,10 +1108,15 @@ def _is_junior_job(title):
 
 
 def _deduplicate_and_filter_jobs(jobs):
+    """Remove duplicados, filtra por senioridade e por localidade."""
     seen = set()
     filtered = []
     for job in jobs:
         if not _is_junior_job(job["titulo"]):
+            continue
+        # Filtro de localidade
+        if not _is_location_allowed(job):
+            _log(f"  ⚠️  Localidade bloqueada: {job['titulo']} — {job.get('local', '?')}")
             continue
         key = (job["titulo"].lower().strip(), job["empresa"].lower().strip())
         if key not in seen:
@@ -501,53 +1130,88 @@ def _deduplicate_and_filter_jobs(jobs):
 # ═══════════════════════════════════════════════════════════════════════
 
 def search_all_jobs(max_per_category=None):
+    # Carregar categorias e localizações dinamicamente do config
+    global JOB_CATEGORIES_PT, JOB_CATEGORIES_EN, PRESENCIAL_ALLOWED
+    if hasattr(settings, "JOB_CATEGORIES") and settings.JOB_CATEGORIES:
+        cats = [c.strip() for c in settings.JOB_CATEGORIES.split(",") if c.strip()]
+        if cats:
+            JOB_CATEGORIES_PT = cats
+            JOB_CATEGORIES_EN = [c for c in cats if any(x in c.lower() for x in ["developer", "analyst", "support", "engineer", "python"])]
+            if not JOB_CATEGORIES_EN:
+                JOB_CATEGORIES_EN = ["software developer", "python developer", "data analyst"]
+
+    if hasattr(settings, "PRESENCIAL_CITIES") and settings.PRESENCIAL_CITIES:
+        PRESENCIAL_ALLOWED = [c.lower() for c in settings.PRESENCIAL_CITIES]
+
     if max_per_category is None:
         max_per_category = settings.MAX_JOBS_PER_CATEGORY
 
     all_jobs = []
 
-    searches_pt = []
-    
-    search_presencial = settings.SEARCH_PRESENCIAL
-    search_portugal = settings.SEARCH_PORTUGAL
-
-    for category in JOB_CATEGORIES_PT:
-        searches_pt.append((category, "remoto Brasil"))
-        if search_presencial:
-            for loc in LOCATIONS_PRESENCIAL:
-                searches_pt.append((category, loc))
-                
-    if search_portugal:
-        for category in JOB_CATEGORIES_PT[:5]:
-            searches_pt.append((category, "Portugal"))
-
-    _log("\n🔍 Iniciando busca de vagas...")
-    _log(f"   📋 {len(searches_pt)} buscas nacionais (PT) + 3 fontes internacionais (EN)")
+    _log("\n🔍 Iniciando busca de vagas — Bot v5")
     _log("=" * 60)
 
-    total = len(searches_pt)
-    for i, (category, location) in enumerate(searches_pt):
-        _log(f"\n[{i+1}/{total}] 🔎 '{category}' - {location}")
-        found = []
+    # ── Fontes BR Nativas ────────────────────────────────────────────
+    _log("\n🇧🇷 Buscando em fontes brasileiras nativas...")
 
-        google_jobs = _search_google_jobs(f"{category} {location}")
-        if google_jobs:
-            _log(f"  Google: {len(google_jobs)} vagas")
-            found.extend(google_jobs)
-        else:
-            _log("  Google: 0 vagas")
+    br_sources = [
+        ("Remotive API", _search_remotive),
+        ("Gupy", _search_gupy_rss),
+        ("Vagas.com.br", _search_vagascom),
+        ("Programathor", _search_programathor),
+        ("GeekHunter", _search_geekhunter),
+        ("Remotar", _search_remotar),
+        ("Trampos.co", _search_trampos),
+    ]
 
+    for category in JOB_CATEGORIES_PT[:4]:  # Limita para não ser muito lento
+        _log(f"\n🔎 Categoria: '{category}'")
+        for source_name, search_fn in br_sources:
+            try:
+                found = search_fn(category)
+                if found:
+                    _log(f"  ✅ {source_name}: {len(found)} vagas")
+                    all_jobs.extend(found[:max_per_category])
+                else:
+                    _log(f"  — {source_name}: 0 vagas")
+            except Exception as e:
+                _log(f"  ❌ {source_name}: erro — {e}")
+            _random_delay(0.3, 0.8)
+
+    # ── APIs de Vagas (Adzuna + JSearch) ──────────────────────────
+    _log(f"\n{'=' * 60}")
+    _log("🌐 Buscando via APIs de vagas (Adzuna + JSearch)...")
+
+    api_categories = JOB_CATEGORIES_PT[:3] + JOB_CATEGORIES_EN[:2]
+    for category in api_categories:
+        _log(f"  🔎 API: '{category}'")
+
+        adzuna_jobs = _search_adzuna(category)
+        if adzuna_jobs:
+            _log(f"    ✅ Adzuna: {len(adzuna_jobs)} vagas")
+            all_jobs.extend(adzuna_jobs[:max_per_category])
+        _random_delay(0.3, 0.6)
+
+        jsearch_jobs = _search_jsearch(category)
+        if jsearch_jobs:
+            _log(f"    ✅ JSearch: {len(jsearch_jobs)} vagas")
+            all_jobs.extend(jsearch_jobs[:max_per_category])
         _random_delay(0.5, 1)
 
-        if len(found) < 3:
-            ddg_jobs = _search_duckduckgo_jobs(f"{category} {location}")
-            if ddg_jobs:
-                _log(f"  DuckDuckGo: {len(ddg_jobs)} vagas")
-                found.extend(ddg_jobs)
-            _random_delay(0.5, 1)
+    # ── Buscas via Google/DuckDuckGo (PT) ───────────────────────────
+    _log(f"\n{'=' * 60}")
+    _log("🔎 Buscando via motores de busca (PT)...")
 
-        all_jobs.extend(found[:max_per_category])
-        _random_delay(0.5, 1.5)
+    for category in JOB_CATEGORIES_PT:
+        for location in ["remoto Brasil", "Recife PE", "Olinda PE", "Jaboatão dos Guararapes PE"]:
+            query = f"{category} {location}"
+            google_jobs = _search_google_jobs(query)
+            if google_jobs:
+                all_jobs.extend(google_jobs[:max_per_category])
+            elif len(all_jobs) < 10:
+                ddg_jobs = _search_duckduckgo_jobs(query)
+                all_jobs.extend(ddg_jobs[:max_per_category])
+            _random_delay(0.5, 1)
 
     # ── Buscas internacionais (EN) ───────────────────────────────────
     _log(f"\n{'=' * 60}")
@@ -556,44 +1220,39 @@ def search_all_jobs(max_per_category=None):
     for category in JOB_CATEGORIES_EN:
         _log(f"\n🔎 International: '{category}'")
 
-        # Remote OK
         rok_jobs = _search_remoteok(category)
         if rok_jobs:
             _log(f"  RemoteOK: {len(rok_jobs)} vagas")
             all_jobs.extend(rok_jobs[:max_per_category])
-        else:
-            _log("  RemoteOK: 0 vagas")
         _random_delay(0.5, 1)
 
-        # We Work Remotely
         wwr_jobs = _search_weworkremotely(category)
         if wwr_jobs:
             _log(f"  WeWorkRemotely: {len(wwr_jobs)} vagas")
             all_jobs.extend(wwr_jobs[:max_per_category])
-        else:
-            _log("  WeWorkRemotely: 0 vagas")
         _random_delay(0.5, 1)
 
-        # Wellfound
         wf_jobs = _search_wellfound(category)
         if wf_jobs:
             _log(f"  Wellfound: {len(wf_jobs)} vagas")
             all_jobs.extend(wf_jobs[:max_per_category])
-        else:
-            _log("  Wellfound: 0 vagas")
         _random_delay(0.5, 1)
 
-    # Filtrar e deduplicar
+    # Filtrar, deduplicar e aplicar filtro de localidade
     unique_jobs = _deduplicate_and_filter_jobs(all_jobs)
 
     s = get_stats()
     _log(f"\n{'=' * 60}")
-    _log(f"✅ Total: {len(all_jobs)} vagas encontradas, {len(unique_jobs)} únicas")
-    for source in ["google", "duckduckgo", "remoteok", "weworkremotely", "wellfound"]:
-        _log(f"   {source.capitalize():18} → ok:{s[source]['ok']} bloqueado:{s[source]['blocked']} erro:{s[source]['error']}")
+    _log(f"✅ Total bruto: {len(all_jobs)} | Após filtros: {len(unique_jobs)} vagas")
+    _log(f"   🏙️  Filtro: presencial apenas Recife/Jaboatão/Olinda | remoto: qualquer lugar")
+
+    for source in _stats:
+        src = _stats[source]
+        if src["ok"] + src["blocked"] + src["error"] > 0:
+            _log(f"   {source.capitalize():20} → ok:{src['ok']} bloqueado:{src['blocked']} erro:{src['error']}")
 
     for job in unique_jobs:
         if not job.get("descricao"):
-            job["descricao"] = f"Vaga de {job['titulo']} na empresa {job['empresa']} em {job['local']}."
+            job["descricao"] = f"Vaga de {job['titulo']} na empresa {job['empresa']} em {job.get('local', 'Brasil')}."
 
     return unique_jobs

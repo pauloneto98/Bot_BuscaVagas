@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 
 from app.config import settings
 from app.api.dependencies import verify_token
-from app.db.repositories import ApplicationRepository
+from app.db.repositories import ApplicationRepository, LeadRepository
 
 router = APIRouter()
 
@@ -41,7 +41,7 @@ def get_stats():
         emp_counts[emp] = emp_counts.get(emp, 0) + 1
     top_empresas = sorted(emp_counts.items(), key=lambda x: -x[1])[:10]
 
-    # Source breakdown
+    # Source breakdown for applications
     source_counts: dict[str, int] = {}
     for c in candidaturas:
         note = c.get("notas", "")
@@ -52,6 +52,41 @@ def get_stats():
         else:
             src = "Automatico"
         source_counts[src] = source_counts.get(src, 0) + 1
+
+    # Lead CRM sources for the new Doughnut Chart
+    leads = LeadRepository.get_all()
+    leads_sources: dict[str, int] = {}
+    for l in leads:
+        src = l.get("fonte", "Manual") or "Manual"
+        if not src:
+            src = "Manual"
+        src_lower = src.lower()
+        if "jsearch" in src_lower:
+            src = "JSearch"
+        elif "adzuna" in src_lower:
+            src = "Adzuna"
+        elif "manual" in src_lower:
+            src = "Manual"
+        elif "gupy" in src_lower:
+            src = "Gupy"
+        else:
+            src = src.capitalize()
+        leads_sources[src] = leads_sources.get(src, 0) + 1
+
+    if not leads_sources:
+        leads_sources = {"Manual": 0, "JSearch": 0, "Adzuna": 0}
+
+    # Funnel calculations
+    total_leads = len(leads)
+    vagas_encontradas = total_leads + total
+    vagas_pre_selecionadas = total_leads + total
+    curriculos_gerados = total
+    emails_enviados_funnel = enviados
+
+    funnel_data = {
+        "labels": ["Vagas Encontradas", "Vagas Qualificadas", "Currículos Gerados", "E-mails Enviados"],
+        "values": [vagas_encontradas, vagas_pre_selecionadas, curriculos_gerados, emails_enviados_funnel]
+    }
 
     # Metrics
     metrics = {"rate_limit_hits": 0, "gemini_calls": 0, "fallbacks_used": 0}
@@ -76,6 +111,8 @@ def get_stats():
             "values": [e[1] for e in top_empresas],
         },
         "sources": source_counts,
+        "leads_sources": leads_sources,
+        "funnel": funnel_data,
         "metrics": metrics,
     }
 

@@ -31,6 +31,26 @@ def _is_valid_email(email: str) -> bool:
     return bool(_EMAIL_REGEX.match(email.strip()))
 
 
+def should_send_email_for_job(job: dict) -> bool:
+    """
+    Decide se devemos enviar e-mail para a vaga com base nas configurações
+    e na inteligência do filtro de e-mails.
+    """
+    if not settings.ENABLE_EMAIL_SENDING:
+        return False
+        
+    if settings.EMAIL_ONLY_SMALL_COMPANIES:
+        # Se a vaga vem de uma grande plataforma de ATS e não tem email direto,
+        # ou se a fonte for bloqueada, evitamos o envio automático.
+        fonte = job.get("fonte", "").lower()
+        if any(src.lower() in fonte for src in settings.EMAIL_BLOCKED_SOURCES):
+            if not job.get("email_direto"):
+                return False
+                
+    return True
+
+
+
 def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:
     """
     Gera o corpo do e-mail usando template fixo no idioma da vaga.

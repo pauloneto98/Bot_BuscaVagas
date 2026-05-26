@@ -139,3 +139,32 @@ class LeadRepository:
             cursor = conn.cursor()
             cursor.execute("UPDATE leads SET status = ? WHERE email = ?", (new_status, email))
             conn.commit()
+
+    @staticmethod
+    def update_lead(lead_id: int, lead_data: dict):
+        """Update lead details by ID."""
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+            UPDATE leads 
+            SET empresa = ?, email = ?, site = ?, cargo_da_vaga = ?, fonte = ?, status = ?
+            WHERE id = ?
+            ''', (
+                lead_data.get('empresa', ''),
+                lead_data.get('email', ''),
+                lead_data.get('site', ''),
+                lead_data.get('cargo_da_vaga', ''),
+                lead_data.get('fonte', ''),
+                lead_data.get('status', 'pending'),
+                lead_id
+            ))
+            conn.commit()
+
+    @staticmethod
+    def delete_lead(lead_id: int):
+        """Delete a lead by ID."""
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM leads WHERE id = ?", (lead_id,))
+            conn.commit()
+

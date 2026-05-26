@@ -7,8 +7,10 @@ import os
 import subprocess
 import sys
 import threading
+from datetime import datetime
 
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from app.config import settings
 from app.api.dependencies import verify_token
@@ -89,26 +91,56 @@ def get_hunter_leads():
     return {"leads": leads}
 
 
+class LeadPayload(BaseModel):
+    empresa: str
+    email: str
+    site: str = ""
+    cargo_da_vaga: str = ""
+    fonte: str = "Manual"
+    status: str = "pending"
+
+
+@router.post("/api/leads", dependencies=[Depends(verify_token)])
+def create_lead(payload: LeadPayload):
+    lead_data = {
+        "empresa": payload.empresa,
+        "email": payload.email,
+        "site": payload.site,
+        "cargo_da_vaga": payload.cargo_da_vaga,
+        "fonte": payload.fonte,
+        "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": payload.status
+    }
+    success = LeadRepository.insert(lead_data)
+    if success:
+        return {"status": "success", "message": "Lead inserido com sucesso!"}
+    return {"status": "error", "message": "Erro ao inserir lead. E-mail duplicado?"}
+
+
+@router.put("/api/leads/{lead_id}", dependencies=[Depends(verify_token)])
+def update_lead(lead_id: int, payload: LeadPayload):
+    lead_data = {
+        "empresa": payload.empresa,
+        "email": payload.email,
+        "site": payload.site,
+        "cargo_da_vaga": payload.cargo_da_vaga,
+        "fonte": payload.fonte,
+        "status": payload.status
+    }
+    LeadRepository.update_lead(lead_id, lead_data)
+    return {"status": "success", "message": "Lead atualizado com sucesso!"}
+
+
+@router.delete("/api/leads/{lead_id}", dependencies=[Depends(verify_token)])
+def delete_lead(lead_id: int):
+    LeadRepository.delete_lead(lead_id)
+    return {"status": "success", "message": "Lead removido com sucesso!"}
+
+
 @router.post("/api/leads/apply", dependencies=[Depends(verify_token)])
 def start_leads_application():
-    from app.api.routes.bot import _bot_process, _bot_lock
-    import app.api.routes.bot as bot_mod
+    """Legado: redireciona para execução unificada (leads já entram no modo full)."""
+    from app.api.routes.bot import start_bot, BotStartPayload
 
-    with _bot_lock:
-        if _bot_process and _bot_process.poll() is None:
-            return {"status": "running", "message": "O bot ja esta em execucao! Aguarde ele finalizar."}
+    return start_bot(BotStartPayload(mode="full", hunt_leads_first=False))
 
-        log_file = settings.LOG_FILE
-        with open(log_file, "w", encoding="utf-8") as f:
-            f.write("Iniciando candidatura para os leads pendentes do banco...\n")
-
-        cmd = [sys.executable, os.path.join(settings.BASE_DIR, "main.py"), "--manual"]
-        bot_mod._bot_process = subprocess.Popen(
-            cmd,
-            stdout=open(log_file, "a", encoding="utf-8"),
-            stderr=subprocess.STDOUT,
-            cwd=settings.BASE_DIR,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-        )
-
-        return {"status": "started", "pid": bot_mod._bot_process.pid, "message": "Disparo de e-mails para os leads iniciado!"}

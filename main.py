@@ -34,7 +34,7 @@ from app.config import settings
 from app.core.browser import apply_via_browser
 from app.core.researcher import find_company_email
 from app.core.validator import run_validation
-from app.core.mailer import send_application_email
+from app.core.mailer import send_application_email, should_send_email_for_job
 from app.core.scraper import search_all_jobs
 from app.services.logger import (
     build_applied_set, export_csv, get_recent, get_stats,
@@ -179,7 +179,7 @@ def load_pending_leads_from_db() -> list[dict]:
     return jobs
 
 
-def run_bot(test_mode: bool = False, manual_only: bool = False):
+def run_bot(test_mode: bool = False):
     """Executa o fluxo principal do bot."""
     start_time = datetime.now()
     candidate_name = settings.CANDIDATE_NAME
@@ -211,7 +211,7 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
         console.print("\n[bold yellow]⚠ MODO TESTE:[/bold yellow] Usando vaga mock (sem envio de email)")
         jobs = [{
             "titulo": "Desenvolvedor Junior Python",
-            "empresa": "Empresa Teste",
+            "empresa": f"Empresa Teste {int(time.time())}",
             "local": "Remoto - Brasil",
             "url": "https://exemplo.com/vaga/123",
             "descricao": (
@@ -220,21 +220,14 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
                 "Requisitos: Python básico, Git, comunicação."
             ),
             "fonte": "Teste",
+            "email_direto": "teste@exemplo.com",
         }]
-    elif manual_only:
-        console.print("\n[bold cyan]📋 MODO MANUAL:[/bold cyan] Processando apenas leads pendentes do banco de dados")
-        jobs = load_pending_leads_from_db()
-        if not jobs:
-            console.print("[yellow]⚠ Nenhum lead pendente no banco de dados.[/yellow]")
-            return
-        console.print(f"  [green]✅[/green] {len(jobs)} lead(s) carregado(s)")
     else:
-        # Carregar leads pendentes + buscados automaticamente
-        manual_jobs = load_pending_leads_from_db()
-        if manual_jobs:
-            console.print(f"\n[bold cyan]📋 {len(manual_jobs)} lead(s) pendente(s) do banco de dados carregado(s)[/bold cyan]")
-        auto_jobs = search_all_jobs()
-        jobs = manual_jobs + auto_jobs
+        pending_jobs = load_pending_leads_from_db()
+        if pending_jobs:
+            console.print(f"\n[bold cyan]📋 {len(pending_jobs)} lead(s) pendente(s) no banco[/bold cyan]")
+        scraped_jobs = search_all_jobs()
+        jobs = pending_jobs + scraped_jobs
 
     if not jobs:
         console.print("\n[yellow]⚠ Nenhuma vaga encontrada. Tente novamente mais tarde.[/yellow]")
@@ -350,26 +343,37 @@ def run_bot(test_mode: bool = False, manual_only: bool = False):
 
             # 5e. Enviar email
             if company_email:
-                success = send_application_email(
-                    to_email=company_email,
-                    job=job,
-                    analysis=analysis,
-                    adapted_data=adapted,
-                    resume_path=pdf_path,
-                )
-                log_application(
-                    history, job["empresa"], job["titulo"],
-                    job.get("url", ""), success,
-                    email_destino=company_email,
-                    curriculo_path=pdf_path,
-                )
-                applied_set.add((emp_key, vaga_key))
-                if success:
-                    applied_count += 1
-                    update_lead_status_by_email(company_email, 'applied')
+                if should_send_email_for_job(job):
+                    success = send_application_email(
+                        to_email=company_email,
+                        job=job,
+                        analysis=analysis,
+                        adapted_data=adapted,
+                        resume_path=pdf_path,
+                    )
+                    log_application(
+                        history, job["empresa"], job["titulo"],
+                        job.get("url", ""), success,
+                        email_destino=company_email,
+                        curriculo_path=pdf_path,
+                    )
+                    applied_set.add((emp_key, vaga_key))
+                    if success:
+                        applied_count += 1
+                        LeadRepository.update_status_by_email(company_email, "applied")
+                    else:
+                        error_count += 1
+                        LeadRepository.update_status_by_email(company_email, "failed")
                 else:
-                    error_count += 1
-                    update_lead_status_by_email(company_email, 'failed')
+                    console.print(f"  📧 Email de contato coletado ({company_email}), mas envio desativado ou filtrado via configuração inteligente.")
+                    log_application(
+                        history, job["empresa"], job["titulo"],
+                        job.get("url", ""), False,
+                        email_destino=company_email,
+                        curriculo_path=pdf_path,
+                        notas="Envio desativado ou filtrado via configuração inteligente"
+                    )
+                    applied_set.add((emp_key, vaga_key))
             else:
                 # Linkedin precisa login, então pulamos vagas do LinkedIn quando não tem email
                 if job.get("url") and "linkedin.com" in job.get("url", "").lower():
@@ -470,8 +474,6 @@ def main():
                         help="Valida configurações e testa conexões")
     parser.add_argument("--status",  action="store_true",
                         help="Exibe histórico de candidaturas e estatísticas")
-    parser.add_argument("--manual",  action="store_true",
-                        help="Processa APENAS leads pendentes do banco de dados")
     parser.add_argument("--retry-browser", action="store_true",
                         help="Tenta aplicar via navegador para vagas passadas sem email")
     args = parser.parse_args()
@@ -487,8 +489,6 @@ def main():
         show_status()
     elif args.teste:
         run_bot(test_mode=True)
-    elif args.manual:
-        run_bot(manual_only=True)
     else:
         run_bot()
 

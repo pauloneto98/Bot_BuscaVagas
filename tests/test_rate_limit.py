@@ -5,7 +5,9 @@ from unittest.mock import patch
 class RateLimitFallbackTest(unittest.TestCase):
     def test_rate_limit_fallback(self):
         import app.core.analyzer as analyzer
-        with patch.object(analyzer, "_call_gemini", return_value="__RATE_LIMIT__"):
+        with patch.object(analyzer, "_call_gemini", return_value="__RATE_LIMIT__"), patch.object(
+            analyzer, "_call_groq", return_value="__RATE_LIMIT__"
+        ):
             from app.core.resume import adapt_resume_and_analyze
             resume_text = "Este e um curriculo de teste"
             job = {
