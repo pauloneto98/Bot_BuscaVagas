@@ -2,13 +2,21 @@
 Módulo de Pesquisa de Empresas — v2
 Pesquisa email de contato/RH da empresa na web.
 Melhorias: DuckDuckGo como fallback do Google, scraping de /contato e /carreiras.
+Integração adicional: Fallback para as APIs Hunter.io e Apollo.io.
 """
 
+import os
 import re
 import requests
 from urllib.parse import quote_plus, urljoin, urlparse
 from bs4 import BeautifulSoup
-from .job_scraper import _get_headers, _random_delay, _safe_get
+from app.core.scraper import _get_headers, _random_delay, _safe_get
+
+# Carregar chaves de API
+from app.config import settings
+
+HUNTER_IO_API_KEY = settings.HUNTER_IO_API_KEY
+APOLLO_IO_API_KEY = settings.APOLLO_IO_API_KEY
 
 _EMAIL_PATTERN = re.compile(
     r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
@@ -128,6 +136,59 @@ def _search_duckduckgo(query: str) -> list[dict]:
         return []
 
 
+def _fallback_hunter_io(domain: str) -> list[str]:
+    """Busca e-mails do domínio via API do Hunter.io."""
+    if not HUNTER_IO_API_KEY or not domain:
+        return []
+    print(f"  [Hunter.io] Buscando contatos para o domínio: {domain}...")
+    try:
+        url = f"https://api.hunter.io/v2/domain-search?domain={domain}&api_key={HUNTER_IO_API_KEY}&type=personal"
+        resp = requests.get(url, timeout=10)
+        if resp.status_code == 200:
+            data = resp.json()
+            emails = []
+            for em in data.get('data', {}).get('emails', []):
+                # Filtra por departamentos úteis se possível, ou pega todos
+                dept = em.get('department')
+                if dept in ['hr', 'executive', 'management'] or not dept:
+                    emails.append(em.get('value', ''))
+            return [e for e in emails if e]
+    except Exception as e:
+        print(f"  [Hunter.io] Erro: {e}")
+    return []
+
+
+def _fallback_apollo_io(domain: str) -> list[str]:
+    """Busca e-mails do domínio via API do Apollo.io."""
+    if not APOLLO_IO_API_KEY or not domain:
+        return []
+    print(f"  [Apollo.io] Buscando contatos de RH para: {domain}...")
+    try:
+        url = "https://api.apollo.io/v1/mixed_people/search"
+        headers = {
+            "Cache-Control": "no-cache",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "api_key": APOLLO_IO_API_KEY,
+            "q_organization_domains": domain,
+            "person_titles": ["recruiter", "hr", "talent", "human resources", "recrutamento", "tech recruiter"],
+            "page": 1
+        }
+        resp = requests.post(url, headers=headers, json=payload, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            emails = []
+            for person in data.get('people', []):
+                email = person.get('email')
+                if email:
+                    emails.append(email)
+            return emails
+    except Exception as e:
+        print(f"  [Apollo.io] Erro: {e}")
+    return []
+
+
 def find_company_email(company_name: str) -> dict:
     """Pesquisa email de contato/RH de uma empresa."""
     print(f"  🔎 Pesquisando contato: {company_name}...")
@@ -137,9 +198,12 @@ def find_company_email(company_name: str) -> dict:
 
     # Queries prioritárias: foco em RH, vagas e recrutamento
     hr_queries = [
-        f'"{company_name}" email RH vagas recrutamento site:br',
-        f'"{company_name}" contato recrutamento curriculo',
-        f'"{company_name}" careers jobs email contact',  # fallback internacional
+        f'"{company_name}" email rh vagas site:br',
+        f'"{company_name}" curriculo vagas contato',
+        f'"{company_name}" vagas.com.br contato',
+        f'"{company_name}" indeed.com contato',
+        f'"{company_name}" linkedin vagas email',
+        f'"{company_name}" trabalhos contato email',
     ]
 
     # ── Etapa 1: Busca focada em RH/vagas ─────────────────────────
@@ -181,10 +245,12 @@ def find_company_email(company_name: str) -> dict:
 
     # ── Etapa 3: Fallback — busca qualquer email da empresa ────────
     if not all_emails:
-        print(f"  🔄 Buscando qualquer email disponível para {company_name}...")
+        print(f"  🔄 Buscando por vagas.com.br e indeed...")
         fallback_queries = [
-            f'"{company_name}" email contato',
-            f'"{company_name}" "@" site',
+            f'"{company_name}" vagas.com.br contato',
+            f'"{company_name}" indeed.com.br contato',
+            f'"{company_name}" wellfound.com contato',
+            f'"{company_name}" careers contact email',
         ]
         for query in fallback_queries:
             _random_delay(0.3, 0.7)
@@ -212,12 +278,28 @@ def find_company_email(company_name: str) -> dict:
             if all_emails:
                 break
 
+    # ── Etapa 4: APIs Oficiais (Fallback) ─────────────────────────
+    if not all_emails and website_url:
+        parsed = urlparse(website_url)
+        domain = parsed.netloc.replace("www.", "")
+        
+        # Tenta Hunter.io
+        api_emails = _fallback_hunter_io(domain)
+        if not api_emails:
+            # Tenta Apollo.io se Hunter falhar
+            api_emails = _fallback_apollo_io(domain)
+        
+        if api_emails:
+            all_emails.extend(api_emails)
+            result["metodo"] = "api_fallback"
+
     # ── Resultado ─────────────────────────────────────────────────
     if all_emails:
         best = _prioritize_emails(list(set(all_emails)))[0]
         result["email"] = best
-        result["metodo"] = "pesquisa_web"
-        print(f"  📧 Email encontrado: {best}")
+        if not result.get("metodo"):
+            result["metodo"] = "pesquisa_web"
+        print(f"  📧 Email encontrado: {best} (Fonte: {result['metodo']})")
     else:
         print(f"  ⚠ Nenhum email encontrado para {company_name}")
 

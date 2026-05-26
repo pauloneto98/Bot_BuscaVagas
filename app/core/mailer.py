@@ -14,22 +14,41 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 
-from dotenv import load_dotenv
-from .job_analyzer import _call_gemini
+from app.core.analyzer import _call_gemini
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, "config.env"))
+from app.config import settings
 
-EMAIL_ADDRESS     = os.getenv("EMAIL_ADDRESS", "")
-EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD", "")
-EMAIL_CC          = os.getenv("EMAIL_CC", "")
-CANDIDATE_NAME    = os.getenv("CANDIDATE_NAME", "Paulo Neto")
+
+EMAIL_ADDRESS     = settings.EMAIL_ADDRESS
+EMAIL_APP_PASSWORD = settings.EMAIL_APP_PASSWORD
+EMAIL_CC          = settings.EMAIL_CC
+CANDIDATE_NAME    = settings.CANDIDATE_NAME
 
 _EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$")
 
 
 def _is_valid_email(email: str) -> bool:
     return bool(_EMAIL_REGEX.match(email.strip()))
+
+
+def should_send_email_for_job(job: dict) -> bool:
+    """
+    Decide se devemos enviar e-mail para a vaga com base nas configurações
+    e na inteligência do filtro de e-mails.
+    """
+    if not settings.ENABLE_EMAIL_SENDING:
+        return False
+        
+    if settings.EMAIL_ONLY_SMALL_COMPANIES:
+        # Se a vaga vem de uma grande plataforma de ATS e não tem email direto,
+        # ou se a fonte for bloqueada, evitamos o envio automático.
+        fonte = job.get("fonte", "").lower()
+        if any(src.lower() in fonte for src in settings.EMAIL_BLOCKED_SOURCES):
+            if not job.get("email_direto"):
+                return False
+                
+    return True
+
 
 
 def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:

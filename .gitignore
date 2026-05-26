@@ -9,3 +9,18 @@ __pycache__/
 venv/
 .venv/
 *.pdf
+
+# Desktop App Build Artifacts
+dist/
+build/
+*.spec
+*.lnk
+
+# Scratch and Deploy Secrets
+scratch/
+scripts/install-awesome-copilot.ps1
+*.pem
+*.log
+*.zip
+*.tar.gz
+*.code-workspace

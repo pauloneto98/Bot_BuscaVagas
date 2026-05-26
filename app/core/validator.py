@@ -7,14 +7,13 @@ import os
 import smtplib
 import socket
 
-from dotenv import load_dotenv
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
-BASE_DIR = os.path.dirname(os.path.dirname(__file__))
-load_dotenv(os.path.join(BASE_DIR, "config.env"))
+from app.config import settings
+
 
 console = Console()
 
@@ -23,14 +22,14 @@ def _check_gemini_api() -> tuple[bool, str]:
     """Testa se a API Gemini está acessível e autenticada."""
     try:
         import google.generativeai as genai
-        api_key = os.getenv("GEMINI_API_KEY", "")
+        api_key = settings.GEMINI_API_KEY
         if not api_key:
             return False, "GEMINI_API_KEY não definida"
         genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel(settings.GEMINI_MODEL)
         resp = model.generate_content("Responda apenas: OK")
         if resp.text:
-            return True, f"Conectado ✓ (modelo: gemini-1.5-flash)"
+            return True, f"Conectado ✓ (modelo: {settings.GEMINI_MODEL})"
         return False, "API respondeu sem texto"
     except Exception as e:
         err = str(e)
@@ -43,8 +42,8 @@ def _check_gemini_api() -> tuple[bool, str]:
 
 def _check_smtp() -> tuple[bool, str]:
     """Testa autenticação Gmail SMTP."""
-    email = os.getenv("EMAIL_ADDRESS", "")
-    password = os.getenv("EMAIL_APP_PASSWORD", "")
+    email = settings.EMAIL_ADDRESS
+    password = settings.EMAIL_APP_PASSWORD
     if not email or not password:
         return False, "EMAIL_ADDRESS ou EMAIL_APP_PASSWORD não definidos"
 
@@ -73,8 +72,8 @@ def _check_smtp() -> tuple[bool, str]:
 
 def _check_resume() -> tuple[bool, str]:
     """Verifica se o currículo PDF existe."""
-    pdf_name = os.getenv("RESUME_PDF", "Curriculo_Paulo_Net0.pdf")
-    path = os.path.join(BASE_DIR, pdf_name)
+    pdf_name = settings.RESUME_PDF
+    path = os.path.join(settings.BASE_DIR, pdf_name)
     if os.path.exists(path):
         size_kb = os.path.getsize(path) // 1024
         return True, f"{pdf_name} encontrado ({size_kb} KB) ✓"
