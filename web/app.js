@@ -11,7 +11,14 @@ const API = '';  // Same origin
 
 async function apiFetch(endpoint, options = {}) {
     if (!options.headers) options.headers = {};
+    const token = localStorage.getItem('dashboard_token');
+    if (token) {
+        options.headers['Authorization'] = `Bearer ${token}`;
+    }
     const res = await fetch(`${API}${endpoint}`, options);
+    if (res.status === 401) {
+        showLoginScreen();
+    }
     return res;
 }
 
@@ -20,6 +27,84 @@ function bootDashboard() {
     checkBotStatus();
     checkAutoStatus();
     lucide.createIcons();
+}
+
+async function handleLogin() {
+    const cpfInput = document.getElementById('login-cpf');
+    const passwordInput = document.getElementById('login-password');
+    const cpf = cpfInput.value.trim();
+    const password = passwordInput.value.trim();
+    
+    if (!cpf || !password) {
+        showToast('CPF e senha são obrigatórios!', 'error');
+        return;
+    }
+    
+    try {
+        const res = await fetch(`/api/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cpf, password })
+        });
+        
+        const data = await res.json();
+        
+        if (res.ok && data.status === 'ok') {
+            localStorage.setItem('dashboard_token', data.token);
+            showToast('Acesso concedido! 🔒', 'success');
+            hideLoginScreen();
+            bootDashboard();
+        } else {
+            showToast(data.detail || 'Senha ou CPF incorretos!', 'error');
+        }
+    } catch (err) {
+        showToast('Erro ao conectar com o servidor.', 'error');
+    }
+}
+
+function handleLogout() {
+    localStorage.removeItem('dashboard_token');
+    showToast('Sessão encerrada.', 'info');
+    showLoginScreen();
+}
+
+function showLoginScreen() {
+    document.getElementById('login-view').classList.remove('hidden');
+    document.getElementById('app-view').classList.add('hidden');
+}
+
+function hideLoginScreen() {
+    document.getElementById('login-view').classList.add('hidden');
+    document.getElementById('app-view').classList.remove('hidden');
+}
+
+async function initSession() {
+    try {
+        const res = await fetch(`/api/bot-status`);
+        if (res.status === 401) {
+            const token = localStorage.getItem('dashboard_token');
+            if (token) {
+                const authRes = await fetch(`/api/bot-status`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (authRes.status === 401) {
+                    showLoginScreen();
+                } else {
+                    hideLoginScreen();
+                    bootDashboard();
+                }
+            } else {
+                showLoginScreen();
+            }
+        } else {
+            hideLoginScreen();
+            bootDashboard();
+        }
+    } catch (e) {
+        // Offline or server error, show dashboard anyway
+        hideLoginScreen();
+        bootDashboard();
+    }
 }
 
 
@@ -976,4 +1061,4 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-bootDashboard();
+initSession();
