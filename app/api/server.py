@@ -50,4 +50,5 @@ def serve_index():
 # Static files must be mounted LAST (catch-all)
 os.makedirs(settings.CURRICULOS_DIR, exist_ok=True)
 app.mount("/cvs", StaticFiles(directory=settings.CURRICULOS_DIR), name="cvs")
-app.mount("/static", StaticFiles(directory=settings.WEB_DIR), name="static")
+app.mount("/", StaticFiles(directory=settings.WEB_DIR, html=True), name="static")
+
