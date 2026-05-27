@@ -1,0 +1,21 @@
+# docker-compose.yml — Bot Busca Vagas (Deploy Simples em VPS)
+version: '3.8'
+
+services:
+  bot-busca-vagas:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: bot_busca_vagas_app
+    ports:
+      - "${PORT:-8000}:8000"
+    restart: unless-stopped
+    volumes:
+      # Montar diretório de dados local para manter banco de dados SQLite, logs e métricas persistentes
+      - ./data:/app/data
+    env_file:
+      # Carregar credenciais seguras a partir de um arquivo .env na VPS
+      - .env
+    environment:
+      - PORT=8000
+      - HOST=0.0.0.0
