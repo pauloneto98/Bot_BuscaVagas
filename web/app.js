@@ -5,6 +5,9 @@
 
 const API = '';  // Same origin
 
+let isManualRunning = false;
+let isAutoRunning = false;
+
 // ═══════════════════════════════════════════════════════════════════
 //  STATE & AUTHENTICATION
 // ═══════════════════════════════════════════════════════════════════
@@ -24,6 +27,14 @@ async function bootDashboard() {
     await checkBotStatus();
     await checkAutoStatus();
     lucide.createIcons();
+
+    // Poll status of both every 3 seconds
+    setInterval(async () => {
+        if (!logPollInterval) {
+            await checkBotStatus();
+        }
+        await checkAutoStatus();
+    }, 3000);
 }
 
 async function handleLogin() {
@@ -453,6 +464,45 @@ btnStop.addEventListener('click', async () => {
     } catch (err) {}
 });
 
+function updateStatusUI() {
+    const running = isManualRunning || isAutoRunning;
+    const dot = document.getElementById('bot-dot');
+    const text = document.getElementById('bot-status-text');
+    const sidebarDot = document.getElementById('sidebar-bot-dot');
+    const sidebarText = document.getElementById('sidebar-bot-text');
+
+    const activeClass = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse';
+    const inactiveClass = 'w-2 h-2 rounded-full bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]';
+
+    if (running) {
+        if (dot) dot.className = activeClass;
+        if (sidebarDot) sidebarDot.className = activeClass;
+
+        const label = isAutoRunning ? 'Piloto Automático' : 'Em Execução';
+        if (text) {
+            text.textContent = label;
+            text.classList.add('text-emerald-400');
+        }
+        if (sidebarText) {
+            sidebarText.textContent = label;
+            sidebarText.classList.add('text-emerald-400');
+        }
+    } else {
+        if (dot) dot.className = inactiveClass;
+        if (sidebarDot) sidebarDot.className = inactiveClass;
+
+        const label = 'Bot Inativo';
+        if (text) {
+            text.textContent = label;
+            text.classList.remove('text-emerald-400');
+        }
+        if (sidebarText) {
+            sidebarText.textContent = label;
+            sidebarText.classList.remove('text-emerald-400');
+        }
+    }
+}
+
 function setBotRunning(running) {
     btnStart.disabled = running;
     btnStop.disabled = !running;
@@ -465,17 +515,12 @@ function setBotRunning(running) {
         btnStop.classList.add('opacity-50', 'cursor-not-allowed');
     }
 
-    const dot = document.getElementById('bot-dot');
-    const text = document.getElementById('bot-status-text');
+    isManualRunning = running;
+    updateStatusUI();
+
     if (running) {
-        dot.className = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse';
-        text.textContent = 'Em Execução';
-        text.classList.add('text-emerald-400');
         termLoader.classList.remove('hidden');
     } else {
-        dot.className = 'w-2 h-2 rounded-full bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]';
-        text.textContent = 'Inativo';
-        text.classList.remove('text-emerald-400');
         termLoader.classList.add('hidden');
     }
 }
@@ -534,6 +579,9 @@ async function checkAutoStatus() {
     try {
         const res = await apiFetch(`/api/auto/status`);
         const data = await res.json();
+        
+        isAutoRunning = !!data.running;
+        updateStatusUI();
         
         if (data.running) {
             btnStartAuto.classList.add('hidden');
@@ -835,10 +883,7 @@ async function checkBotStatus() {
     try {
         const res = await apiFetch(`/api/bot-status`);
         const data = await res.json();
-        if (data.running) {
-            setBotRunning(true);
-            startLogPolling();
-        }
+        setBotRunning(!!data.running);
     } catch (err) {}
 }
 
