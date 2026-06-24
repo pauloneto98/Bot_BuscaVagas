@@ -272,10 +272,14 @@ def run_bot(test_mode: bool = False):
                 company_email = company_info.get("email", "")
 
             # Verificar configuração de Otimização de Tokens
+            use_base_only = os.getenv("USE_BASE_RESUME_ONLY", "false").lower() == "true"
             personalize_only_emails = os.getenv("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true"
             is_email_job = bool(company_email)
             skip_ai = False
-            
+
+            if use_base_only:
+                skip_ai = True
+
             if personalize_only_emails and not is_email_job:
                 skip_ai = True
                 
@@ -287,7 +291,12 @@ def run_bot(test_mode: bool = False):
             adapted = {}
             
             if skip_ai:
-                msg = "Título não especificado." if job.get('_force_base_resume') else "Vaga sem e-mail detectada."
+                if use_base_only:
+                    msg = "Modo 'Currículo Base' ativado nas configurações."
+                elif job.get('_force_base_resume'):
+                    msg = "Título não especificado."
+                else:
+                    msg = "Vaga sem e-mail detectada."
                 console.print(f"  [blue]⚡ Usando currículo base:[/blue] {msg}")
                 pdf_path = get_resume_path()
             else:

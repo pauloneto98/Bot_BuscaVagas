@@ -16,16 +16,13 @@ async function apiFetch(endpoint, options = {}) {
         options.headers['Authorization'] = `Bearer ${token}`;
     }
     const res = await fetch(`${API}${endpoint}`, options);
-    if (res.status === 401) {
-        showLoginScreen();
-    }
     return res;
 }
 
-function bootDashboard() {
-    loadDashboard();
-    checkBotStatus();
-    checkAutoStatus();
+async function bootDashboard() {
+    await loadDashboard();
+    await checkBotStatus();
+    await checkAutoStatus();
     lucide.createIcons();
 }
 
@@ -52,8 +49,8 @@ async function handleLogin() {
         if (res.ok && data.status === 'ok') {
             localStorage.setItem('dashboard_token', data.token);
             showToast('Acesso concedido! 🔒', 'success');
+            await bootDashboard();
             hideLoginScreen();
-            bootDashboard();
         } else {
             showToast(data.detail || 'Senha ou CPF incorretos!', 'error');
         }
@@ -68,43 +65,58 @@ function handleLogout() {
     showLoginScreen();
 }
 
-function showLoginScreen() {
-    document.getElementById('login-view').classList.remove('hidden');
+function showAuthLoader() {
+    document.getElementById('auth-loader').classList.remove('hidden');
+    document.getElementById('login-view').classList.add('hidden');
     document.getElementById('app-view').classList.add('hidden');
 }
 
+function hideAuthLoader() {
+    document.getElementById('auth-loader').classList.add('hidden');
+}
+
+function showLoginScreen() {
+    hideAuthLoader();
+    document.getElementById('app-view').classList.add('hidden');
+    document.getElementById('login-view').classList.remove('hidden');
+}
+
 function hideLoginScreen() {
-    document.getElementById('login-view').classList.add('hidden');
     document.getElementById('app-view').classList.remove('hidden');
+    document.getElementById('login-view').classList.add('hidden');
 }
 
 async function initSession() {
+    showAuthLoader();
+
+    const token = localStorage.getItem('dashboard_token');
+    if (!token) {
+        hideAuthLoader();
+        showLoginScreen();
+        return;
+    }
+
     try {
-        const res = await fetch(`/api/bot-status`);
-        if (res.status === 401) {
-            const token = localStorage.getItem('dashboard_token');
-            if (token) {
-                const authRes = await fetch(`/api/bot-status`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
-                if (authRes.status === 401) {
-                    showLoginScreen();
-                } else {
-                    hideLoginScreen();
-                    bootDashboard();
-                }
-            } else {
-                showLoginScreen();
-            }
-        } else {
+        const res = await fetch(`/api/bot-status`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.status === 200) {
+            await bootDashboard();
+            hideAuthLoader();
             hideLoginScreen();
-            bootDashboard();
+            return;
+        }
+
+        if (res.status === 401) {
+            localStorage.removeItem('dashboard_token');
         }
     } catch (e) {
-        // Offline or server error, show dashboard anyway
-        hideLoginScreen();
-        bootDashboard();
+        showToast('Não foi possível conectar ao servidor. Verifique sua rede.', 'error');
     }
+
+    hideAuthLoader();
+    showLoginScreen();
 }
 
 
@@ -694,6 +706,7 @@ async function loadConfig() {
         document.getElementById('cfg-cc').value = cfg.email_cc || '';
         document.getElementById('cfg-name').value = cfg.candidate_name || '';
         document.getElementById('cfg-personalize-emails').checked = cfg.personalize_only_emails;
+        document.getElementById('cfg-use-base-resume-only').checked = cfg.use_base_resume_only;
 
         if (cfg.resume_pdf) {
             document.getElementById('upload-text').textContent = `📎 ${cfg.resume_pdf}`;
@@ -716,15 +729,23 @@ async function loadConfig() {
 }
 
 document.getElementById('btn-save-config').addEventListener('click', async () => {
+    const confirmPassword = prompt('Por segurança, digite a sua Senha do Dashboard para confirmar as alterações:');
+    if (!confirmPassword) {
+        showToast('Cancelado. A senha de confirmação é obrigatória.', 'error');
+        return;
+    }
+
     const payload = {
         gemini_api_key: document.getElementById('cfg-api-key').value,
         email_address: document.getElementById('cfg-email').value,
         email_app_password: document.getElementById('cfg-password').value,
         dashboard_password: document.getElementById('cfg-dashboard-password').value,
+        confirm_password: confirmPassword,
         email_cc: document.getElementById('cfg-cc').value,
         candidate_name: document.getElementById('cfg-name').value,
         resume_pdf: document.getElementById('upload-text').textContent.replace('📎 ', '').trim(),
         personalize_only_emails: document.getElementById('cfg-personalize-emails').checked,
+        use_base_resume_only: document.getElementById('cfg-use-base-resume-only').checked,
         job_categories: window.currentKeywords.join(', '),
         presencial_cities: window.currentCities.join(', '),
     };
@@ -737,11 +758,18 @@ document.getElementById('btn-save-config').addEventListener('click', async () =>
         });
         const data = await res.json();
 
-        const feedback = document.getElementById('save-feedback');
-        feedback.classList.remove('opacity-0');
-        showToast(data.message, 'success');
-        setTimeout(() => feedback.classList.add('opacity-0'), 3000);
-    } catch (err) {}
+        if (res.ok) {
+            const feedback = document.getElementById('save-feedback');
+            feedback.classList.remove('opacity-0');
+            showToast(data.message, 'success');
+            setTimeout(() => feedback.classList.add('opacity-0'), 3000);
+            loadConfig();
+        } else {
+            showToast(data.detail || 'Senha de confirmação incorreta!', 'error');
+        }
+    } catch (err) {
+        showToast('Erro ao salvar as configurações', 'error');
+    }
 });
 
 
@@ -1059,6 +1087,6 @@ document.addEventListener('DOMContentLoaded', () => {
             window.addSearchTag('city');
         }
     });
-});
 
-initSession();
+    initSession();
+});

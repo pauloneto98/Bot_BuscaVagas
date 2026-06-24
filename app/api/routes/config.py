@@ -11,6 +11,11 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.api.dependencies import verify_token
+from app.utils.security import (
+    decrypt_secret,
+    encrypt_secret,
+    validate_cpf,
+)
 
 router = APIRouter()
 
@@ -29,8 +34,10 @@ class ConfigPayload(BaseModel):
     request_delay_max: float = 5
     dashboard_password: str = "admin123"
     personalize_only_emails: bool = True
+    use_base_resume_only: bool = False
     job_categories: str = ""
     presencial_cities: str = ""
+    confirm_password: str = ""
 
 
 def _parse_env_file() -> dict:
@@ -82,10 +89,21 @@ def _write_env_file(config: dict):
 @router.get("/api/config", dependencies=[Depends(verify_token)])
 def get_config():
     raw = _parse_env_file()
+    
+    # Decriptografar os valores usando os helpers de security.py
+    gemini_key = decrypt_secret(raw.get("GEMINI_API_KEY", ""))
+    email_pass = decrypt_secret(raw.get("EMAIL_APP_PASSWORD", ""))
+    dash_pass = decrypt_secret(raw.get("DASHBOARD_PASSWORD", "admin123"))
+
+    # Mascarar campos sensíveis para não expor no frontend em texto puro por padrão
+    masked_gemini = f"{gemini_key[:4]}..." if len(gemini_key) > 4 else gemini_key
+    masked_email = f"{email_pass[:4]}..." if len(email_pass) > 4 else email_pass
+    masked_dash = f"{dash_pass[:2]}..." if len(dash_pass) > 2 else dash_pass
+
     return {
-        "gemini_api_key": raw.get("GEMINI_API_KEY", ""),
+        "gemini_api_key": masked_gemini,
         "email_address": raw.get("EMAIL_ADDRESS", ""),
-        "email_app_password": raw.get("EMAIL_APP_PASSWORD", ""),
+        "email_app_password": masked_email,
         "email_cc": raw.get("EMAIL_CC", ""),
         "candidate_name": raw.get("CANDIDATE_NAME", ""),
         "resume_pdf": raw.get("RESUME_PDF", ""),
@@ -94,8 +112,9 @@ def get_config():
         "search_portugal": raw.get("SEARCH_PORTUGAL", "true").lower() == "true",
         "request_delay_min": float(raw.get("REQUEST_DELAY_MIN", "2")),
         "request_delay_max": float(raw.get("REQUEST_DELAY_MAX", "5")),
-        "dashboard_password": raw.get("DASHBOARD_PASSWORD", "admin123"),
+        "dashboard_password": masked_dash,
         "personalize_only_emails": raw.get("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true",
+        "use_base_resume_only": raw.get("USE_BASE_RESUME_ONLY", "false").lower() == "true",
         "job_categories": raw.get("JOB_CATEGORIES", "desenvolvedor de software, analista de dados, suporte de TI, help desk, desenvolvedor python, desenvolvedor web, analista de sistemas"),
         "presencial_cities": raw.get("PRESENCIAL_CITIES", "Recife, Jaboatão dos Guararapes, Olinda"),
     }
@@ -103,10 +122,36 @@ def get_config():
 
 @router.post("/api/config", dependencies=[Depends(verify_token)])
 def save_config(payload: ConfigPayload):
+    raw = _parse_env_file()
+    
+    # Validação obrigatória da senha do painel para salvar qualquer alteração
+    current_password = decrypt_secret(raw.get("DASHBOARD_PASSWORD", "admin123"))
+    if not payload.confirm_password or payload.confirm_password != current_password:
+        raise HTTPException(status_code=401, detail="Senha de confirmacao incorreta ou nao informada.")
+
+    # Se os campos vierem mascarados do frontend (terminando em "..."), manter os valores originais criptografados
+    gemini_key = payload.gemini_api_key
+    if gemini_key.endswith("...") and "GEMINI_API_KEY" in raw:
+        gemini_key_encrypted = raw["GEMINI_API_KEY"]
+    else:
+        gemini_key_encrypted = encrypt_secret(gemini_key)
+
+    email_pass = payload.email_app_password
+    if email_pass.endswith("...") and "EMAIL_APP_PASSWORD" in raw:
+        email_pass_encrypted = raw["EMAIL_APP_PASSWORD"]
+    else:
+        email_pass_encrypted = encrypt_secret(email_pass)
+
+    dash_pass = payload.dashboard_password
+    if dash_pass.endswith("...") and "DASHBOARD_PASSWORD" in raw:
+        dash_pass_encrypted = raw["DASHBOARD_PASSWORD"]
+    else:
+        dash_pass_encrypted = encrypt_secret(dash_pass)
+
     env_map = {
-        "GEMINI_API_KEY": payload.gemini_api_key,
+        "GEMINI_API_KEY": gemini_key_encrypted,
         "EMAIL_ADDRESS": payload.email_address,
-        "EMAIL_APP_PASSWORD": payload.email_app_password,
+        "EMAIL_APP_PASSWORD": email_pass_encrypted,
         "EMAIL_CC": payload.email_cc,
         "CANDIDATE_NAME": payload.candidate_name,
         "RESUME_PDF": payload.resume_pdf,
@@ -116,11 +161,11 @@ def save_config(payload: ConfigPayload):
         "REQUEST_DELAY_MIN": str(payload.request_delay_min),
         "REQUEST_DELAY_MAX": str(payload.request_delay_max),
         "PERSONALIZE_ONLY_EMAILS": str(payload.personalize_only_emails).lower(),
+        "USE_BASE_RESUME_ONLY": str(payload.use_base_resume_only).lower(),
         "JOB_CATEGORIES": payload.job_categories,
         "PRESENCIAL_CITIES": payload.presencial_cities,
+        "DASHBOARD_PASSWORD": dash_pass_encrypted,
     }
-    if hasattr(payload, 'dashboard_password') and payload.dashboard_password:
-        env_map["DASHBOARD_PASSWORD"] = payload.dashboard_password
 
     _write_env_file(env_map)
     return {"status": "ok", "message": "Configuracoes salvas com sucesso!"}

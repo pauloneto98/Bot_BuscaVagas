@@ -7,6 +7,7 @@ All modules should import `settings` from here instead of calling os.getenv() di
 import os
 
 from dotenv import load_dotenv
+from app.utils.security import decrypt_secret
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -28,17 +29,17 @@ class Settings:
     HUNTER_LOG_FILE: str = os.path.join(BASE_DIR, "data", "hunter.log")
 
     # ── API Keys ───────────────────────────────────────────────────
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
-    GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
-    HUNTER_IO_API_KEY: str = os.getenv("HUNTER_IO_API_KEY", "")
-    APOLLO_IO_API_KEY: str = os.getenv("APOLLO_IO_API_KEY", "")
-    ADZUNA_APP_ID: str = os.getenv("ADZUNA_APP_ID", "")
-    ADZUNA_APP_KEY: str = os.getenv("ADZUNA_APP_KEY", "")
-    RAPIDAPI_KEY: str = os.getenv("RAPIDAPI_KEY", "")
+    GEMINI_API_KEY: str = decrypt_secret(os.getenv("GEMINI_API_KEY", ""))
+    GROQ_API_KEY: str = decrypt_secret(os.getenv("GROQ_API_KEY", ""))
+    HUNTER_IO_API_KEY: str = decrypt_secret(os.getenv("HUNTER_IO_API_KEY", ""))
+    APOLLO_IO_API_KEY: str = decrypt_secret(os.getenv("APOLLO_IO_API_KEY", ""))
+    ADZUNA_APP_ID: str = decrypt_secret(os.getenv("ADZUNA_APP_ID", ""))
+    ADZUNA_APP_KEY: str = decrypt_secret(os.getenv("ADZUNA_APP_KEY", ""))
+    RAPIDAPI_KEY: str = decrypt_secret(os.getenv("RAPIDAPI_KEY", ""))
 
-    # ── Email ──────────────────────────────────────────────────────
+    # ── Email ─────────────────────────────────────────────────────
     EMAIL_ADDRESS: str = os.getenv("EMAIL_ADDRESS", "")
-    EMAIL_APP_PASSWORD: str = os.getenv("EMAIL_APP_PASSWORD", "")
+    EMAIL_APP_PASSWORD: str = decrypt_secret(os.getenv("EMAIL_APP_PASSWORD", ""))
     EMAIL_CC: str = os.getenv("EMAIL_CC", "")
 
     # ── Candidate ──────────────────────────────────────────────────
@@ -56,6 +57,7 @@ class Settings:
 
     # ── Dashboard ──────────────────────────────────────────────────
     DASHBOARD_PASSWORD: str = os.getenv("DASHBOARD_PASSWORD", "admin123")
+    DASHBOARD_PASSWORD_HASH: str = os.getenv("DASHBOARD_PASSWORD_HASH", "")
     DISABLE_DASHBOARD_AUTH: bool = os.getenv("DISABLE_DASHBOARD_AUTH", "true").lower() == "true"
     PERSONALIZE_ONLY_EMAILS: bool = os.getenv("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true"
     ENABLE_EMAIL_SENDING: bool = os.getenv("ENABLE_EMAIL_SENDING", "true").lower() == "true"
