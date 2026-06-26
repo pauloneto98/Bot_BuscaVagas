@@ -13,65 +13,82 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.config import settings
-from app.api.dependencies import verify_token
+from app.api.dependencies import get_current_user
 from app.db.repositories import LeadRepository
+from app.utils.paths import get_user_log_file
 
 router = APIRouter()
 
-_hunter_process: subprocess.Popen | None = None
+# Track hunter processes by user_id
+_hunter_processes: dict[int, subprocess.Popen] = {}
 _hunter_lock = threading.Lock()
 
 
-@router.post("/api/hunter/start", dependencies=[Depends(verify_token)])
-def start_hunter():
-    global _hunter_process
+@router.post("/api/hunter/start")
+def start_hunter(current_user: dict = Depends(get_current_user)):
+    global _hunter_processes
+    user_id = current_user["id"]
     with _hunter_lock:
-        if _hunter_process and _hunter_process.poll() is None:
+        proc = _hunter_processes.get(user_id)
+        if proc and proc.poll() is None:
             return {"status": "running", "message": "O Email Hunter ja esta em execucao!"}
 
-        log_file = settings.HUNTER_LOG_FILE
+        log_file = get_user_log_file(user_id, "hunter.log")
         with open(log_file, "w", encoding="utf-8") as f:
             f.write("")
 
         cmd = [sys.executable, "-m", "app.core.hunter"]
-        _hunter_process = subprocess.Popen(
+        # Pass user_id as env variable to child process
+        child_env = {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "PYTHONIOENCODING": "utf-8",
+            "CURRENT_USER_ID": str(user_id)
+        }
+        
+        _hunter_processes[user_id] = subprocess.Popen(
             cmd,
             stdout=open(log_file, "a", encoding="utf-8"),
             stderr=subprocess.STDOUT,
             cwd=settings.BASE_DIR,
-            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"},
+            env=child_env,
         )
-        return {"status": "started", "pid": _hunter_process.pid, "message": "Email Hunter iniciado!"}
+        return {"status": "started", "pid": _hunter_processes[user_id].pid, "message": "Email Hunter iniciado!"}
 
 
-@router.post("/api/hunter/stop", dependencies=[Depends(verify_token)])
-def stop_hunter():
-    global _hunter_process
+@router.post("/api/hunter/stop")
+def stop_hunter(current_user: dict = Depends(get_current_user)):
+    global _hunter_processes
+    user_id = current_user["id"]
     with _hunter_lock:
-        if _hunter_process and _hunter_process.poll() is None:
-            _hunter_process.terminate()
-            _hunter_process = None
+        proc = _hunter_processes.get(user_id)
+        if proc and proc.poll() is None:
+            proc.terminate()
+            _hunter_processes[user_id] = None
             return {"status": "stopped", "message": "Email Hunter parado."}
         return {"status": "idle", "message": "O Hunter nao esta rodando."}
 
 
-@router.get("/api/hunter/status", dependencies=[Depends(verify_token)])
-def hunter_status():
-    global _hunter_process
+@router.get("/api/hunter/status")
+def hunter_status(current_user: dict = Depends(get_current_user)):
+    global _hunter_processes
+    user_id = current_user["id"]
     with _hunter_lock:
-        if _hunter_process is None:
+        proc = _hunter_processes.get(user_id)
+        if proc is None:
             return {"running": False}
-        if _hunter_process.poll() is None:
-            return {"running": True, "pid": _hunter_process.pid}
+        if proc.poll() is None:
+            return {"running": True, "pid": proc.pid}
         else:
-            code = _hunter_process.returncode
-            _hunter_process = None
+            code = proc.returncode
+            _hunter_processes[user_id] = None
             return {"running": False, "last_exit_code": code}
 
 
-@router.get("/api/hunter/logs", dependencies=[Depends(verify_token)])
-def get_hunter_logs():
-    log_file = settings.HUNTER_LOG_FILE
+@router.get("/api/hunter/logs")
+def get_hunter_logs(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    log_file = get_user_log_file(user_id, "hunter.log")
     if not os.path.exists(log_file):
         return {"log": ""}
     try:
@@ -85,9 +102,10 @@ def get_hunter_logs():
         return {"log": ""}
 
 
-@router.get("/api/hunter/leads", dependencies=[Depends(verify_token)])
-def get_hunter_leads():
-    leads = LeadRepository.get_all()
+@router.get("/api/hunter/leads")
+def get_hunter_leads(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    leads = LeadRepository.get_all(user_id)
     return {"leads": leads}
 
 
@@ -100,8 +118,9 @@ class LeadPayload(BaseModel):
     status: str = "pending"
 
 
-@router.post("/api/leads", dependencies=[Depends(verify_token)])
-def create_lead(payload: LeadPayload):
+@router.post("/api/leads")
+def create_lead(payload: LeadPayload, current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
     lead_data = {
         "empresa": payload.empresa,
         "email": payload.email,
@@ -111,14 +130,15 @@ def create_lead(payload: LeadPayload):
         "data": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "status": payload.status
     }
-    success = LeadRepository.insert(lead_data)
+    success = LeadRepository.insert(lead_data, user_id)
     if success:
         return {"status": "success", "message": "Lead inserido com sucesso!"}
     return {"status": "error", "message": "Erro ao inserir lead. E-mail duplicado?"}
 
 
-@router.put("/api/leads/{lead_id}", dependencies=[Depends(verify_token)])
-def update_lead(lead_id: int, payload: LeadPayload):
+@router.put("/api/leads/{lead_id}")
+def update_lead(lead_id: int, payload: LeadPayload, current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
     lead_data = {
         "empresa": payload.empresa,
         "email": payload.email,
@@ -127,20 +147,21 @@ def update_lead(lead_id: int, payload: LeadPayload):
         "fonte": payload.fonte,
         "status": payload.status
     }
-    LeadRepository.update_lead(lead_id, lead_data)
+    LeadRepository.update_lead(lead_id, lead_data, user_id)
     return {"status": "success", "message": "Lead atualizado com sucesso!"}
 
 
-@router.delete("/api/leads/{lead_id}", dependencies=[Depends(verify_token)])
-def delete_lead(lead_id: int):
-    LeadRepository.delete_lead(lead_id)
+@router.delete("/api/leads/{lead_id}")
+def delete_lead(lead_id: int, current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    LeadRepository.delete_lead(lead_id, user_id)
     return {"status": "success", "message": "Lead removido com sucesso!"}
 
 
-@router.post("/api/leads/apply", dependencies=[Depends(verify_token)])
-def start_leads_application():
-    """Legado: redireciona para execução unificada (leads já entram no modo full)."""
+@router.post("/api/leads/apply")
+def start_leads_application(current_user: dict = Depends(get_current_user)):
+    """Legado: redireciona para execução unificada."""
     from app.api.routes.bot import start_bot, BotStartPayload
+    return start_bot(BotStartPayload(mode="full", hunt_leads_first=False), current_user=current_user)
 
-    return start_bot(BotStartPayload(mode="full", hunt_leads_first=False))
 

@@ -105,3 +105,77 @@ settings = Settings()
 
 # Ensure data directory exists
 os.makedirs(settings.DATA_DIR, exist_ok=True)
+
+
+class UserSettings:
+    """Loads and encapsulates user-specific settings from the database (Multi-Tenant)."""
+
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+        
+        # User Config Defaults
+        self.candidate_name: str = ""
+        self.resume_filename: str = ""
+        self.email_address: str = ""
+        self.email_app_password: str = ""
+        self.email_cc: str = ""
+        self.job_categories: list[str] = []
+        self.presencial_cities: list[str] = []
+        self.search_presencial: bool = True
+        self.search_portugal: bool = True
+        self.max_jobs_per_category: int = 5
+        
+        self.load()
+
+    def load(self):
+        """Load settings from the user_config table in SQLite."""
+        from app.db.repositories import UserConfigRepository
+        from app.utils.crypto import decrypt_val
+
+        cfg = UserConfigRepository.get_by_user_id(self.user_id)
+        if cfg:
+            self.candidate_name = cfg.get("candidate_name") or ""
+            self.resume_filename = cfg.get("resume_filename") or ""
+            self.email_address = cfg.get("email_address") or ""
+            self.email_app_password = decrypt_val(cfg.get("email_app_password", ""))
+            self.email_cc = cfg.get("email_cc") or ""
+            self.job_categories = cfg.get("job_categories") or []
+            self.presencial_cities = cfg.get("presencial_cities") or []
+            self.search_presencial = bool(cfg.get("search_presencial", True))
+            self.search_portugal = bool(cfg.get("search_portugal", True))
+            self.max_jobs_per_category = int(cfg.get("max_jobs_per_category", 5))
+
+    # ── User Specific Isolated Paths ─────────────────────────────────
+    @property
+    def data_dir(self) -> str:
+        from app.utils.paths import get_user_data_dir
+        return get_user_data_dir(self.user_id)
+
+    @property
+    def resume_path(self) -> str:
+        """Absolute path to the user's base resume PDF."""
+        if not self.resume_filename:
+            return ""
+        return os.path.join(self.data_dir, self.resume_filename)
+
+    @property
+    def resume_dir(self) -> str:
+        """Directory for resumes customized by AI for specific jobs."""
+        from app.utils.paths import get_user_resume_dir
+        return get_user_resume_dir(self.user_id)
+
+    @property
+    def log_file(self) -> str:
+        from app.utils.paths import get_user_log_file
+        return get_user_log_file(self.user_id, "bot.log")
+
+    @property
+    def hunter_log_file(self) -> str:
+        from app.utils.paths import get_user_log_file
+        return get_user_log_file(self.user_id, "hunter.log")
+
+    @property
+    def base_resume_cache_file(self) -> str:
+        """Parsed resume text cache (to avoid re-parsing Gemini resume text)."""
+        return os.path.join(self.data_dir, "base_resume_parsed.json")
+

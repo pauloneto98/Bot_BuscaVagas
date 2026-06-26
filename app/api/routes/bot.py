@@ -12,11 +12,12 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.config import settings
-from app.api.dependencies import verify_token
-router = APIRouter()
+from app.api.dependencies import get_current_user
+from app.utils.paths import get_user_log_file
+from app.services.job_queue import JobQueue
+from app.db.connection import get_db_connection
 
-_bot_process: subprocess.Popen | None = None
-_bot_lock = threading.Lock()
+router = APIRouter()
 
 
 class BotStartPayload(BaseModel):
@@ -24,62 +25,84 @@ class BotStartPayload(BaseModel):
     hunt_leads_first: bool = False
 
 
-@router.post("/api/start", dependencies=[Depends(verify_token)])
-def start_bot(payload: BotStartPayload):
-    global _bot_process
-    with _bot_lock:
-        if _bot_process and _bot_process.poll() is None:
-            return {"status": "running", "message": "O bot ja esta em execucao!"}
+@router.post("/api/start")
+def start_bot(payload: BotStartPayload, current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    
+    # Check if there is already a pending or running job for this user
+    active_job = JobQueue.get_active_job_for_user(user_id)
+    if active_job:
+        return {"status": "running", "message": "Você já tem uma execução pendente ou em andamento na fila!"}
 
-        log_file = settings.LOG_FILE
+    # Determine job_type
+    if payload.mode == "teste":
+        job_type = "teste"
+    elif payload.hunt_leads_first:
+        job_type = "full_cycle"
+    else:
+        job_type = "apply_only"
+
+    # Clear logs
+    log_file = get_user_log_file(user_id, "bot.log")
+    try:
         with open(log_file, "w", encoding="utf-8") as f:
             f.write("")
+    except Exception:
+        pass
 
-        cmd = [sys.executable, "-m", "app.services.run_once"]
-        if payload.hunt_leads_first and payload.mode != "teste":
-            cmd.append("--hunt-leads")
-        if payload.mode == "teste":
-            cmd.append("--teste")
-
-        _bot_process = subprocess.Popen(
-            cmd,
-            stdout=open(log_file, "a", encoding="utf-8"),
-            stderr=subprocess.STDOUT,
-            cwd=settings.BASE_DIR,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
-        )
-
-        return {"status": "started", "pid": _bot_process.pid, "message": "Bot iniciado com sucesso!"}
+    # Add to queue
+    job_id = JobQueue.add_job(user_id, job_type)
+    return {"status": "started", "job_id": job_id, "message": "Sua solicitação foi adicionada à fila de execução com sucesso!"}
 
 
-@router.post("/api/stop", dependencies=[Depends(verify_token)])
-def stop_bot():
-    global _bot_process
-    with _bot_lock:
-        if _bot_process and _bot_process.poll() is None:
-            _bot_process.terminate()
-            _bot_process = None
-            return {"status": "stopped", "message": "Bot parado."}
-        return {"status": "idle", "message": "O bot nao esta rodando."}
+@router.post("/api/stop")
+def stop_bot(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    active_job = JobQueue.get_active_job_for_user(user_id)
+    if active_job:
+        JobQueue.cancel_job(active_job["id"])
+        return {"status": "stopped", "message": "Sua execução foi cancelada/interrompida."}
+    return {"status": "idle", "message": "Nenhuma execução ativa encontrada para parar."}
 
 
-@router.get("/api/bot-status", dependencies=[Depends(verify_token)])
-def bot_status():
-    global _bot_process
-    with _bot_lock:
-        if _bot_process is None:
-            return {"running": False}
-        if _bot_process.poll() is None:
-            return {"running": True, "pid": _bot_process.pid}
-        else:
-            code = _bot_process.returncode
-            _bot_process = None
-            return {"running": False, "last_exit_code": code}
+@router.get("/api/bot-status")
+def bot_status(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    active_job = JobQueue.get_active_job_for_user(user_id)
+    if active_job:
+        pos = JobQueue.get_queue_position(user_id, active_job["id"])
+        return {
+            "running": active_job["status"] == "running",
+            "status": active_job["status"],
+            "queue_position": pos,
+            "job_id": active_job["id"],
+            "job_type": active_job["job_type"]
+        }
+    
+    # Return last completed job info
+    try:
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM job_queue WHERE user_id = ? ORDER BY id DESC LIMIT 1", (user_id,))
+            row = cursor.fetchone()
+        if row:
+            job = dict(row)
+            return {
+                "running": False,
+                "status": job["status"],
+                "last_job_id": job["id"],
+                "last_exit_code": 0 if job["status"] == "done" else 1
+            }
+    except Exception:
+        pass
+
+    return {"running": False, "status": "idle"}
 
 
-@router.get("/api/logs", dependencies=[Depends(verify_token)])
-def get_logs():
-    log_file = settings.LOG_FILE
+@router.get("/api/logs")
+def get_logs(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    log_file = get_user_log_file(user_id, "bot.log")
     if not os.path.exists(log_file):
         return {"log": ""}
     try:
@@ -91,3 +114,4 @@ def get_logs():
         return {"log": "\n".join(lines)}
     except Exception:
         return {"log": ""}
+

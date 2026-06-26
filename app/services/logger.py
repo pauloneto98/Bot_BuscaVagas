@@ -12,13 +12,18 @@ from datetime import datetime, date
 from app.config import settings
 from app.db.repositories import ApplicationRepository
 
+from app.utils.paths import get_user_data_dir
+
 # ── Paths ──────────────────────────────────────────────────────────
-CSV_FILE = os.path.join(settings.DATA_DIR, "candidaturas.csv")
-MD_FILE = os.path.join(settings.DATA_DIR, "candidaturas_enviadas.md")
+def _get_user_csv_file(user_id: int) -> str:
+    return os.path.join(get_user_data_dir(user_id), "candidaturas.csv")
+
+def _get_user_md_file(user_id: int) -> str:
+    return os.path.join(get_user_data_dir(user_id), "candidaturas_enviadas.md")
 
 
-def _ensure_data_dir():
-    os.makedirs(settings.DATA_DIR, exist_ok=True)
+def _ensure_data_dir(user_id: int = 1):
+    get_user_data_dir(user_id)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -48,7 +53,7 @@ def inc_fallback():
 
 
 def _persist_metrics():
-    _ensure_data_dir()
+    os.makedirs(settings.DATA_DIR, exist_ok=True)
     with open(settings.METRICS_FILE, "w", encoding="utf-8") as f:
         json.dump(_metrics, f, indent=2)
 
@@ -65,9 +70,9 @@ def export_metrics(path: str | None = None):
 #  APPLICATION HISTORY
 # ═══════════════════════════════════════════════════════════════════
 
-def load_history() -> dict:
+def load_history(user_id: int = 1) -> dict:
     """Legacy wrapper for backward compatibility."""
-    return {"candidaturas": ApplicationRepository.get_all()}
+    return {"candidaturas": ApplicationRepository.get_all(user_id)}
 
 
 def save_history(history: dict):
@@ -75,14 +80,14 @@ def save_history(history: dict):
     pass
 
 
-def build_applied_set(history: dict = None) -> set[tuple[str, str]]:
+def build_applied_set(history: dict = None, user_id: int = 1) -> set[tuple[str, str]]:
     """Create a set of (empresa, vaga) for O(1) duplicate lookups."""
-    return ApplicationRepository.get_applied_keys()
+    return ApplicationRepository.get_applied_keys(user_id)
 
 
-def is_already_applied(history: dict, empresa: str, titulo_vaga: str) -> bool:
+def is_already_applied(history: dict, empresa: str, titulo_vaga: str, user_id: int = 1) -> bool:
     """Check if an application already exists in the database."""
-    return ApplicationRepository.is_already_applied(empresa, titulo_vaga)
+    return ApplicationRepository.is_already_applied(empresa, titulo_vaga, user_id)
 
 
 def log_application(
@@ -94,6 +99,7 @@ def log_application(
     email_destino: str = "",
     curriculo_path: str = "",
     notas: str = "",
+    user_id: int = 1,
 ) -> dict:
     """Record a new application in the database, CSV, and Markdown."""
     entry = {
@@ -107,21 +113,21 @@ def log_application(
         "notas": notas,
     }
 
-    ApplicationRepository.insert(entry)
+    ApplicationRepository.insert(entry, user_id)
 
-    if "candidaturas" in history:
+    if history and "candidaturas" in history:
         history["candidaturas"].append(entry)
 
-    _append_csv(entry)
-    _append_md(entry)
+    _append_csv(entry, user_id)
+    _append_md(entry, user_id)
     return entry
 
 
-def _append_csv(entry: dict):
+def _append_csv(entry: dict, user_id: int):
     """Append an entry to the CSV history file."""
-    _ensure_data_dir()
-    file_exists = os.path.exists(CSV_FILE)
-    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
+    csv_file = _get_user_csv_file(user_id)
+    file_exists = os.path.exists(csv_file)
+    with open(csv_file, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=[
             "data", "empresa", "vaga", "url",
             "email_enviado", "email_destino", "curriculo_path", "notas",
@@ -131,15 +137,15 @@ def _append_csv(entry: dict):
         writer.writerow(entry)
 
 
-def _append_md(entry: dict):
+def _append_md(entry: dict, user_id: int):
     """Append the application to a Markdown report if email was sent."""
     if not entry.get("email_enviado"):
         return
 
-    _ensure_data_dir()
-    file_exists = os.path.exists(MD_FILE)
+    md_file = _get_user_md_file(user_id)
+    file_exists = os.path.exists(md_file)
 
-    with open(MD_FILE, "a", encoding="utf-8") as f:
+    with open(md_file, "a", encoding="utf-8") as f:
         if not file_exists:
             f.write("# Relatorio de Candidaturas Enviadas\n\n")
             f.write("| Data | Empresa | Vaga | Email de Destino | Arquivo CV |\n")
@@ -149,9 +155,9 @@ def _append_md(entry: dict):
         f.write(f"| {entry['data']} | **{entry['empresa']}** | {entry['vaga']} | `{entry.get('email_destino', '')}` | `{cv_name}` |\n")
 
 
-def get_stats(history: dict = None) -> dict:
+def get_stats(history: dict = None, user_id: int = 1) -> dict:
     """Return aggregate statistics from the database."""
-    candidaturas = ApplicationRepository.get_all()
+    candidaturas = ApplicationRepository.get_all(user_id)
     total = len(candidaturas)
     enviados = sum(1 for c in candidaturas if c.get("email_enviado"))
     hoje = date.today().strftime("%Y-%m-%d")
@@ -171,14 +177,15 @@ def get_stats(history: dict = None) -> dict:
     }
 
 
-def get_recent(history: dict = None, n: int = 10) -> list[dict]:
+def get_recent(history: dict = None, n: int = 10, user_id: int = 1) -> list[dict]:
     """Return the N most recent applications."""
-    apps = ApplicationRepository.get_all()
+    apps = ApplicationRepository.get_all(user_id)
     return list(reversed(apps))[:n]
 
 
-def export_csv() -> str:
+def export_csv(user_id: int = 1) -> str:
     """Return the path to the exported CSV file."""
-    if os.path.exists(CSV_FILE):
-        return CSV_FILE
+    csv_file = _get_user_csv_file(user_id)
+    if os.path.exists(csv_file):
+        return csv_file
     return ""

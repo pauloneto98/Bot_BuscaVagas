@@ -40,10 +40,10 @@ def _check_gemini_api() -> tuple[bool, str]:
         return False, f"Erro: {err[:80]}"
 
 
-def _check_smtp() -> tuple[bool, str]:
+def _check_smtp(user_settings=None) -> tuple[bool, str]:
     """Testa autenticação Gmail SMTP."""
-    email = settings.EMAIL_ADDRESS
-    password = settings.EMAIL_APP_PASSWORD
+    email = user_settings.email_address if user_settings else settings.EMAIL_ADDRESS
+    password = user_settings.email_app_password if user_settings else settings.EMAIL_APP_PASSWORD
     if not email or not password:
         return False, "EMAIL_ADDRESS ou EMAIL_APP_PASSWORD não definidos"
 
@@ -70,28 +70,32 @@ def _check_smtp() -> tuple[bool, str]:
         return False, f"Erro SMTP: {str(e)[:80]}"
 
 
-def _check_resume() -> tuple[bool, str]:
+def _check_resume(user_settings=None) -> tuple[bool, str]:
     """Verifica se o currículo PDF existe."""
-    pdf_name = settings.RESUME_PDF
-    path = os.path.join(settings.BASE_DIR, pdf_name)
-    if os.path.exists(path):
+    if user_settings:
+        path = user_settings.resume_path
+        pdf_name = user_settings.resume_filename
+    else:
+        pdf_name = settings.RESUME_PDF
+        path = os.path.join(settings.BASE_DIR, pdf_name)
+    
+    if path and os.path.exists(path):
         size_kb = os.path.getsize(path) // 1024
         return True, f"{pdf_name} encontrado ({size_kb} KB) ✓"
     return False, f"Arquivo não encontrado: {path}"
 
 
-def _check_env_vars() -> list[tuple[str, bool, str]]:
+def _check_env_vars(user_settings=None) -> list[tuple[str, bool, str]]:
     """Verifica variáveis de ambiente obrigatórias."""
     vars_required = [
-        ("GEMINI_API_KEY", "Chave da API Gemini"),
-        ("EMAIL_ADDRESS", "Email Gmail"),
-        ("EMAIL_APP_PASSWORD", "Senha de App Gmail"),
-        ("CANDIDATE_NAME", "Nome do candidato"),
-        ("RESUME_PDF", "Nome do arquivo PDF"),
+        ("GEMINI_API_KEY", "Chave da API Gemini", settings.GEMINI_API_KEY),
+        ("EMAIL_ADDRESS", "Email Gmail", user_settings.email_address if user_settings else settings.EMAIL_ADDRESS),
+        ("EMAIL_APP_PASSWORD", "Senha de App Gmail", user_settings.email_app_password if user_settings else settings.EMAIL_APP_PASSWORD),
+        ("CANDIDATE_NAME", "Nome do candidato", user_settings.candidate_name if user_settings else settings.CANDIDATE_NAME),
+        ("RESUME_PDF", "Nome do arquivo PDF", user_settings.resume_filename if user_settings else settings.RESUME_PDF),
     ]
     results = []
-    for var, desc in vars_required:
-        val = os.getenv(var, "")
+    for var, desc, val in vars_required:
         if val:
             # Mascarar valor sensível
             if "PASSWORD" in var or "KEY" in var:
@@ -104,7 +108,7 @@ def _check_env_vars() -> list[tuple[str, bool, str]]:
     return results
 
 
-def run_validation(full: bool = True) -> bool:
+def run_validation(full: bool = True, user_settings=None) -> bool:
     """
     Executa todas as validações e exibe resultado.
     full=True: testa conexões reais (mais lento)
@@ -125,7 +129,7 @@ def run_validation(full: bool = True) -> bool:
     table.add_column("Status", width=8)
     table.add_column("Valor", style="dim")
 
-    env_checks = _check_env_vars()
+    env_checks = _check_env_vars(user_settings=user_settings)
     for desc, ok, val in env_checks:
         icon = "[green]✅[/green]" if ok else "[red]❌[/red]"
         table.add_row(desc, icon, val)
@@ -136,7 +140,7 @@ def run_validation(full: bool = True) -> bool:
 
     # ── Arquivo de currículo ──────────────────────────────────────
     console.print()
-    resume_ok, resume_msg = _check_resume()
+    resume_ok, resume_msg = _check_resume(user_settings=user_settings)
     if resume_ok:
         console.print(f"  [green]✅ Currículo:[/green] {resume_msg}")
     else:
@@ -159,7 +163,7 @@ def run_validation(full: bool = True) -> bool:
 
         # SMTP
         console.print("  [dim]→ Testando Gmail SMTP...[/dim]", end="")
-        smtp_ok, smtp_msg = _check_smtp()
+        smtp_ok, smtp_msg = _check_smtp(user_settings=user_settings)
         if smtp_ok:
             console.print(f"\r  [green]✅ Gmail SMTP:[/green] {smtp_msg}          ")
         else:

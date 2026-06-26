@@ -12,6 +12,7 @@ echo "============================================================"
 cleanup() {
     echo "⏹ Sinais de interrupção recebidos. Encerrando processos..."
     kill -TERM "$scheduler_pid" 2>/dev/null || true
+    kill -TERM "$worker_pid" 2>/dev/null || true
     kill -TERM "$web_pid" 2>/dev/null || true
     exit 0
 }
@@ -25,10 +26,16 @@ echo "🚀 Iniciando Agendador de Candidaturas Contínuo (24/7)..."
 python run_scheduler.py > data/bot_scheduler.log 2>&1 &
 scheduler_pid=$!
 
-# 2. Iniciar o servidor web FastAPI/Uvicorn em foreground
+# 2. Iniciar o worker sequencial da fila em background
+echo "🚀 Iniciando Worker da Fila Sequencial..."
+python -m app.services.worker > data/bot_worker.log 2>&1 &
+worker_pid=$!
+
+# 3. Iniciar o servidor web FastAPI/Uvicorn em foreground
 echo "💻 Iniciando Servidor do Dashboard Web..."
 python web_server.py &
 web_pid=$!
 
 # Aguardar os processos terminarem
-wait "$web_pid" "$scheduler_pid"
+wait "$web_pid" "$scheduler_pid" "$worker_pid"
+

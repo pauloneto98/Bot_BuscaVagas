@@ -90,3 +90,31 @@ def validate_cpf(cpf: str) -> bool:
         if digit != int(cpf[i]):
             return False
     return True
+
+
+def create_access_token(data: dict, expires_delta = None) -> str:
+    """Generate a JWT token with user_id and expiration."""
+    import jwt
+    import datetime
+    from app.utils.crypto import get_or_create_key
+
+    secret_key = get_or_create_key()
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+    to_encode.update({"exp": expire})
+    return jwt.encode(to_encode, secret_key, algorithm="HS256")
+
+
+def decode_access_token(token: str) -> dict | None:
+    """Decode a JWT token, return payload or None if invalid/expired."""
+    import jwt
+    from app.utils.crypto import get_or_create_key
+    try:
+        secret_key = get_or_create_key()
+        return jwt.decode(token, secret_key, algorithms=["HS256"])
+    except Exception:
+        return None
+

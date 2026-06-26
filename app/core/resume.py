@@ -140,11 +140,12 @@ def _resume_cache_key(pdf_path: str) -> str:
         return hashlib.sha256(pdf_path.encode()).hexdigest()[:16]
 
 
-def _load_cached_base_resume(cache_key: str) -> dict | None:
-    if not os.path.exists(_BASE_RESUME_CACHE):
+def _load_cached_base_resume(cache_key: str, cache_file: str | None = None) -> dict | None:
+    path = cache_file if cache_file else _BASE_RESUME_CACHE
+    if not os.path.exists(path):
         return None
     try:
-        with open(_BASE_RESUME_CACHE, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             store = json.load(f)
         entry = store.get(cache_key)
         if entry and isinstance(entry, dict):
@@ -154,17 +155,18 @@ def _load_cached_base_resume(cache_key: str) -> dict | None:
     return None
 
 
-def _save_cached_base_resume(cache_key: str, data: dict):
+def _save_cached_base_resume(cache_key: str, data: dict, cache_file: str | None = None):
+    path = cache_file if cache_file else _BASE_RESUME_CACHE
     store = {}
-    if os.path.exists(_BASE_RESUME_CACHE):
+    if os.path.exists(path):
         try:
-            with open(_BASE_RESUME_CACHE, "r", encoding="utf-8") as f:
+            with open(path, "r", encoding="utf-8") as f:
                 store = json.load(f)
         except Exception:
             store = {}
     store[cache_key] = data
     try:
-        with open(_BASE_RESUME_CACHE, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(store, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -303,11 +305,11 @@ def _parse_experience_section(section_text: str) -> list[dict]:
     return experiences
 
 
-def parse_base_resume(resume_text: str, pdf_path: str | None = None) -> dict:
+def parse_base_resume(resume_text: str, pdf_path: str | None = None, cache_file: str | None = None) -> dict:
     """Estrutura o currículo base a partir do PDF — sem alterar conteúdo via IA."""
     cache_key = _resume_cache_key(pdf_path) if pdf_path else None
     if cache_key:
-        cached = _load_cached_base_resume(cache_key)
+        cached = _load_cached_base_resume(cache_key, cache_file=cache_file)
         if cached:
             return cached
 
@@ -361,7 +363,7 @@ def parse_base_resume(resume_text: str, pdf_path: str | None = None) -> dict:
         base["_formacao_raw"] = sections["formacao"]
 
     if cache_key:
-        _save_cached_base_resume(cache_key, base)
+        _save_cached_base_resume(cache_key, base, cache_file=cache_file)
 
     return base
 
@@ -513,7 +515,7 @@ def _filter_skills_to_base_pool(tailored: list, base_pool: list) -> list:
     return result if result else base_pool
 
 
-def adapt_resume_and_analyze(resume_text, job, pdf_path: str | None = None):
+def adapt_resume_and_analyze(resume_text, job, pdf_path: str | None = None, cache_file: str | None = None):
     """
     Preserva o currículo base; a IA personaliza apenas objetivo e habilidades técnicas.
     """
@@ -522,7 +524,7 @@ def adapt_resume_and_analyze(resume_text, job, pdf_path: str | None = None):
         descricao = f"Vaga de {job['titulo']} na empresa {job['empresa']} em {job['local']}."
 
     international = is_international_job(job)
-    base = parse_base_resume(resume_text, pdf_path=pdf_path)
+    base = parse_base_resume(resume_text, pdf_path=pdf_path, cache_file=cache_file)
     base_pool = base.get("_base_skills_pool") or base.get("habilidades_tecnicas", [])
     objetivo_base = base.get("objetivo", "")
 
@@ -677,14 +679,16 @@ class ResumePDF(FPDF):
         return self.get_y() < (self.h - 15)
 
 
-def generate_resume_pdf(adapted_data, job, candidate_name):
+def generate_resume_pdf(adapted_data, job, candidate_name, output_dir=None):
     """Gera PDF de currículo de 1 página."""
-    _ensure_output_dir()
+    if output_dir is None:
+        output_dir = OUTPUT_DIR
+    os.makedirs(output_dir, exist_ok=True)
 
     empresa_slug = re.sub(r"[^\w]", "_", job.get("empresa", "empresa"))[:30]
     vaga_slug = re.sub(r"[^\w]", "_", job.get("titulo", "vaga"))[:30]
     filename = f"CV_{candidate_name.replace(' ', '_')}_{empresa_slug}_{vaga_slug}.pdf"
-    filepath = os.path.join(OUTPUT_DIR, filename)
+    filepath = os.path.join(output_dir, filename)
 
     if os.path.exists(filepath):
         _safe_print(f"  ⚠ Currículo com o mesmo nome já existe: {filename}. Não guardando duplicata.")
@@ -845,8 +849,8 @@ def generate_resume_pdf(adapted_data, job, candidate_name):
         # Verificar duplicata por tamanho de arquivo
         temp_size = os.path.getsize(temp_filepath)
         duplicate_path = None
-        for existing_file in os.listdir(OUTPUT_DIR):
-            existing_path = os.path.join(OUTPUT_DIR, existing_file)
+        for existing_file in os.listdir(output_dir):
+            existing_path = os.path.join(output_dir, existing_file)
             if os.path.isfile(existing_path) and not existing_file.endswith(".tmp") and existing_file.endswith(".pdf"):
                 if os.path.getsize(existing_path) == temp_size:
                     duplicate_path = existing_path
@@ -876,13 +880,15 @@ def generate_resume_pdf(adapted_data, job, candidate_name):
 #  GERADOR DE DOCX (1 página, compacto)
 # ═══════════════════════════════════════════════════════════════════════
 
-def generate_resume_docx(adapted_data, job, candidate_name):
-    _ensure_output_dir()
+def generate_resume_docx(adapted_data, job, candidate_name, output_dir=None):
+    if output_dir is None:
+        output_dir = OUTPUT_DIR
+    os.makedirs(output_dir, exist_ok=True)
 
     empresa_slug = re.sub(r"[^\w]", "_", job.get("empresa", "empresa"))[:30]
     vaga_slug = re.sub(r"[^\w]", "_", job.get("titulo", "vaga"))[:30]
     filename = f"CV_{candidate_name.replace(' ', '_')}_{empresa_slug}_{vaga_slug}.docx"
-    filepath = os.path.join(OUTPUT_DIR, filename)
+    filepath = os.path.join(output_dir, filename)
 
     if os.path.exists(filepath):
         print(f"  ⚠ Currículo com o mesmo nome já existe: {filename}. Não guardando duplicata.")
@@ -1045,8 +1051,8 @@ def generate_resume_docx(adapted_data, job, candidate_name):
         # Verificar duplicata por tamanho de arquivo
         temp_size = os.path.getsize(temp_filepath)
         duplicate_path = None
-        for existing_file in os.listdir(OUTPUT_DIR):
-            existing_path = os.path.join(OUTPUT_DIR, existing_file)
+        for existing_file in os.listdir(output_dir):
+            existing_path = os.path.join(output_dir, existing_file)
             if os.path.isfile(existing_path) and not existing_file.endswith(".tmp") and existing_file.endswith(".docx"):
                 if os.path.getsize(existing_path) == temp_size:
                     duplicate_path = existing_path

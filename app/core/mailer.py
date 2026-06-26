@@ -50,8 +50,7 @@ def should_send_email_for_job(job: dict) -> bool:
     return True
 
 
-
-def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:
+def generate_email_body(job: dict, analysis: dict, adapted_data: dict, candidate_name: str = CANDIDATE_NAME) -> dict:
     """
     Gera o corpo do e-mail usando template fixo no idioma da vaga.
     Suporta: pt-BR, pt-PT, en, es
@@ -63,62 +62,62 @@ def generate_email_body(job: dict, analysis: dict, adapted_data: dict) -> dict:
     empresa = job.get('empresa', 'your company')
 
     if idioma.startswith("en"):
-        assunto = f"Application \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+        assunto = f"Application \u2013 {titulo} \u2013 {candidate_name}"
         corpo = (
             f"Dear Hiring Manager,\n\n"
-            f"My name is {CANDIDATE_NAME} and I am writing to apply for the "
+            f"My name is {candidate_name} and I am writing to apply for the "
             f"{titulo} position at {empresa}.\n\n"
             f"I have experience with {skills_str or 'software development and IT support'} "
             f"and I am eager to contribute to your team.\n\n"
             f"Please find my resum\u00e9 attached for your review.\n\n"
             f"Thank you for your time and consideration. "
             f"I look forward to the opportunity to discuss my qualifications further.\n\n"
-            f"Best regards,\n{CANDIDATE_NAME}"
+            f"Best regards,\n{candidate_name}"
         )
 
     elif idioma.startswith("es"):
-        assunto = f"Solicitud de Empleo \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+        assunto = f"Solicitud de Empleo \u2013 {titulo} \u2013 {candidate_name}"
         corpo = (
             f"Estimado/a equipo de Selecci\u00f3n,\n\n"
-            f"Mi nombre es {CANDIDATE_NAME} y me dirijo a ustedes para postularme "
+            f"Mi nombre es {candidate_name} y me dirijo a ustedes para postularme "
             f"al puesto de {titulo} en {empresa}.\n\n"
             f"Cuento con experiencia en {skills_str or 'desarrollo de software y soporte t\u00e9cnico'} "
-            f"y tengo gran inter\u00e9s en formar parte de su equipo.\n\n"
+            f"y tenho gran inter\u00e9s en formar parte de su equipo.\n\n"
             f"Adjunto mi curr\u00edculum v\u00edtae para su consideraci\u00f3n.\n\n"
             f"Agradezco su atenci\u00f3n y quedo a su disposici\u00f3n para cualquier consulta.\n\n"
-            f"Un cordial saludo,\n{CANDIDATE_NAME}"
+            f"Un cordial saludo,\n{candidate_name}"
         )
 
     elif idioma == "pt-PT":
-        assunto = f"Candidatura \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+        assunto = f"Candidatura \u2013 {titulo} \u2013 {candidate_name}"
         corpo = (
             f"Exmos. Senhores,\n\n"
-            f"O meu nome \u00e9 {CANDIDATE_NAME} e venho por este meio candidatar-me "
+            f"O meu nome \u00e9 {candidate_name} e venho por este meio candidatar-me "
             f"\u00e0 vaga de {titulo} na {empresa}.\n\n"
             f"Tenho experi\u00eancia em {skills_str or 'desenvolvimento de software e suporte de TI'} "
             f"e estou motivado/a para contribuir com a vossa equipa.\n\n"
             f"Junto em anexo o meu curr\u00edculo para aprecia\u00e7\u00e3o.\n\n"
             f"Agrade\u00e7o a aten\u00e7\u00e3o dispensada e fico ao dispor para esclarecimentos.\n\n"
-            f"Com os melhores cumprimentos,\n{CANDIDATE_NAME}"
+            f"Com os melhores cumprimentos,\n{candidate_name}"
         )
 
-    else:  # pt-BR (padr\u00e3o)
-        assunto = f"Candidatura \u2013 {titulo} \u2013 {CANDIDATE_NAME}"
+    else:  # pt-BR (padrão)
+        assunto = f"Candidatura \u2013 {titulo} \u2013 {candidate_name}"
         corpo = (
             f"Prezados,\n\n"
-            f"Meu nome \u00e9 {CANDIDATE_NAME} e gostaria de me candidatar \u00e0 vaga de "
+            f"Meu nome \u00e9 {candidate_name} e gostaria de me candidatar \u00e0 vaga de "
             f"{titulo} na {empresa}.\n\n"
             f"Tenho experi\u00eancia com {skills_str or 'desenvolvimento de software e suporte de TI'} "
             f"e estou em busca de novas oportunidades para contribuir com a equipe de voc\u00eas.\n\n"
             f"Segue meu curr\u00edculo em anexo para aprecia\u00e7\u00e3o.\n\n"
-            f"Agrade\u00e7o a aten\u00e7\u00e3o e fico \u00e0 disposi\u00e7\u00e3o para uma conversa.\n\n"
-            f"Atenciosamente,\n{CANDIDATE_NAME}"
+            f"Agrade\u00e7o a aten\u00e7\u00e3o e fico \u00e0 disposição para uma conversa.\n\n"
+            f"Atenciosamente,\n{candidate_name}"
         )
 
     return {
         "assunto": assunto,
         "corpo_texto": corpo,
-        "corpo_html": _text_to_html(corpo, job, CANDIDATE_NAME, idioma),
+        "corpo_html": _text_to_html(corpo, job, candidate_name, idioma),
     }
 
 
@@ -187,12 +186,18 @@ def send_application_email(
     analysis: dict,
     adapted_data: dict,
     resume_path: str,
+    user_settings=None,
 ) -> bool:
     """
     Envia email HTML de candidatura com currículo PDF em anexo.
     Retorna True se enviado com sucesso.
     """
-    if not EMAIL_ADDRESS or not EMAIL_APP_PASSWORD:
+    email_address = user_settings.email_address if user_settings else EMAIL_ADDRESS
+    email_app_password = user_settings.email_app_password if user_settings else EMAIL_APP_PASSWORD
+    email_cc = user_settings.email_cc if user_settings else EMAIL_CC
+    candidate_name = user_settings.candidate_name if user_settings else CANDIDATE_NAME
+
+    if not email_address or not email_app_password:
         print("  ✗ Credenciais de email não configuradas!")
         return False
 
@@ -200,15 +205,15 @@ def send_application_email(
         print(f"  ✗ Email de destino inválido: '{to_email}'")
         return False
 
-    email_content = generate_email_body(job, analysis, adapted_data)
+    email_content = generate_email_body(job, analysis, adapted_data, candidate_name=candidate_name)
 
     # Montar mensagem multipart (HTML + texto puro)
     msg = MIMEMultipart("alternative")
     msg["Subject"] = email_content["assunto"]
-    msg["From"]    = f"{CANDIDATE_NAME} <{EMAIL_ADDRESS}>"
+    msg["From"]    = f"{candidate_name} <{email_address}>"
     msg["To"]      = to_email
-    if EMAIL_CC and _is_valid_email(EMAIL_CC) and EMAIL_CC != to_email:
-        msg["Cc"] = EMAIL_CC
+    if email_cc and _is_valid_email(email_cc) and email_cc != to_email:
+        msg["Cc"] = email_cc
 
     msg.attach(MIMEText(email_content["corpo_texto"], "plain", "utf-8"))
     msg.attach(MIMEText(email_content["corpo_html"],  "html",  "utf-8"))
@@ -237,16 +242,16 @@ def send_application_email(
 
     # Enviar via Gmail SMTP SSL
     recipients = [to_email]
-    if EMAIL_CC and _is_valid_email(EMAIL_CC) and EMAIL_CC != to_email:
-        recipients.append(EMAIL_CC)
+    if email_cc and _is_valid_email(email_cc) and email_cc != to_email:
+        recipients.append(email_cc)
 
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as smtp:
-            smtp.login(EMAIL_ADDRESS, EMAIL_APP_PASSWORD)
-            smtp.sendmail(EMAIL_ADDRESS, recipients, outer.as_string())
+            smtp.login(email_address, email_app_password)
+            smtp.sendmail(email_address, recipients, outer.as_string())
         print(f"  📧 Email enviado → {to_email}")
-        if EMAIL_CC in recipients:
-            print(f"     (CC enviado para {EMAIL_CC})")
+        if email_cc in recipients:
+            print(f"     (CC enviado para {email_cc})")
         print(f"     Assunto: {email_content['assunto']}")
         return True
     except smtplib.SMTPAuthenticationError:
@@ -258,4 +263,5 @@ def send_application_email(
         return False
     except Exception as e:
         print(f"  ✗ Erro ao enviar email: {e}")
+        return Falseemail: {e}")
         return False

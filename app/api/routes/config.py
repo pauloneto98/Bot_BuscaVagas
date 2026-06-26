@@ -1,8 +1,3 @@
-"""
-Config & Upload Routes — /api/config, /api/upload-resume
-Manages application settings and resume file uploads.
-"""
-
 import os
 import re
 
@@ -10,12 +5,11 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 from app.config import settings
-from app.api.dependencies import verify_token
-from app.utils.security import (
-    decrypt_secret,
-    encrypt_secret,
-    validate_cpf,
-)
+from app.api.dependencies import get_current_user
+from app.db.repositories import UserConfigRepository, UserRepository
+from app.utils.security import verify_password, hash_password
+from app.utils.crypto import encrypt_val, decrypt_val
+from app.utils.paths import get_user_data_dir
 
 router = APIRouter()
 
@@ -27,12 +21,12 @@ class ConfigPayload(BaseModel):
     email_cc: str = ""
     candidate_name: str = ""
     resume_pdf: str = ""
-    max_jobs_per_category: int = 10
+    max_jobs_per_category: int = 5
     search_presencial: bool = True
     search_portugal: bool = True
     request_delay_min: float = 2
     request_delay_max: float = 5
-    dashboard_password: str = "admin123"
+    dashboard_password: str = ""
     personalize_only_emails: bool = True
     use_base_resume_only: bool = False
     job_categories: str = ""
@@ -40,155 +34,130 @@ class ConfigPayload(BaseModel):
     confirm_password: str = ""
 
 
-def _parse_env_file() -> dict:
-    """Read config.env into a dict."""
-    config = {}
-    if not os.path.exists(settings.CONFIG_FILE):
-        return config
-    with open(settings.CONFIG_FILE, "r", encoding="utf-8", errors="replace") as f:
-        for line in f:
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            if "=" in line:
-                key, _, value = line.partition("=")
-                config[key.strip()] = value.strip()
-    return config
-
-
-def _write_env_file(config: dict):
-    """Write config dict back to config.env preserving comments."""
-    lines = []
-    if os.path.exists(settings.CONFIG_FILE):
-        with open(settings.CONFIG_FILE, "r", encoding="utf-8") as f:
-            lines = f.readlines()
-
-    written_keys = set()
-    new_lines = []
-
-    for line in lines:
-        stripped = line.strip()
-        if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.split("=", 1)[0].strip()
-            if key in config:
-                new_lines.append(f"{key}={config[key]}\n")
-                written_keys.add(key)
-            else:
-                new_lines.append(line)
-        else:
-            new_lines.append(line)
-
-    for key, value in config.items():
-        if key not in written_keys:
-            new_lines.append(f"{key}={value}\n")
-
-    with open(settings.CONFIG_FILE, "w", encoding="utf-8") as f:
-        f.writelines(new_lines)
-
-
-@router.get("/api/config", dependencies=[Depends(verify_token)])
-def get_config():
-    raw = _parse_env_file()
+@router.get("/api/config")
+def get_config(current_user: dict = Depends(get_current_user)):
+    """Retrieve configurations for the logged-in user from database."""
+    user_id = current_user["id"]
+    cfg = UserConfigRepository.get_by_user_id(user_id)
     
-    # Decriptografar os valores usando os helpers de security.py
-    gemini_key = decrypt_secret(raw.get("GEMINI_API_KEY", ""))
-    email_pass = decrypt_secret(raw.get("EMAIL_APP_PASSWORD", ""))
-    dash_pass = decrypt_secret(raw.get("DASHBOARD_PASSWORD", "admin123"))
+    if not cfg:
+        # Fallback default configuration if not initialized
+        cfg = {
+            "candidate_name": current_user["name"],
+            "resume_filename": "",
+            "email_address": current_user["email"],
+            "email_app_password": "",
+            "email_cc": "",
+            "job_categories": [],
+            "presencial_cities": [],
+            "search_presencial": True,
+            "search_portugal": True,
+            "max_jobs_per_category": 5
+        }
 
-    # Mascarar campos sensíveis para não expor no frontend em texto puro por padrão
-    masked_gemini = f"{gemini_key[:4]}..." if len(gemini_key) > 4 else gemini_key
-    masked_email = f"{email_pass[:4]}..." if len(email_pass) > 4 else email_pass
-    masked_dash = f"{dash_pass[:2]}..." if len(dash_pass) > 2 else dash_pass
+    # Decrypt SMTP app password using Fernet helper
+    email_pass_raw = decrypt_val(cfg.get("email_app_password", ""))
+    masked_email_pass = f"{email_pass_raw[:4]}..." if len(email_pass_raw) > 4 else email_pass_raw
+
+    # Convert lists to comma-separated strings for frontend compatibility
+    cats = cfg.get("job_categories", [])
+    cats_str = ", ".join(cats) if isinstance(cats, list) else str(cats)
+    
+    cities = cfg.get("presencial_cities", [])
+    cities_str = ", ".join(cities) if isinstance(cities, list) else str(cities)
 
     return {
-        "gemini_api_key": masked_gemini,
-        "email_address": raw.get("EMAIL_ADDRESS", ""),
-        "email_app_password": masked_email,
-        "email_cc": raw.get("EMAIL_CC", ""),
-        "candidate_name": raw.get("CANDIDATE_NAME", ""),
-        "resume_pdf": raw.get("RESUME_PDF", ""),
-        "max_jobs_per_category": int(raw.get("MAX_JOBS_PER_CATEGORY", "10")),
-        "search_presencial": raw.get("SEARCH_PRESENCIAL", "true").lower() == "true",
-        "search_portugal": raw.get("SEARCH_PORTUGAL", "true").lower() == "true",
-        "request_delay_min": float(raw.get("REQUEST_DELAY_MIN", "2")),
-        "request_delay_max": float(raw.get("REQUEST_DELAY_MAX", "5")),
-        "dashboard_password": masked_dash,
-        "personalize_only_emails": raw.get("PERSONALIZE_ONLY_EMAILS", "true").lower() == "true",
-        "use_base_resume_only": raw.get("USE_BASE_RESUME_ONLY", "false").lower() == "true",
-        "job_categories": raw.get("JOB_CATEGORIES", "desenvolvedor de software, analista de dados, suporte de TI, help desk, desenvolvedor python, desenvolvedor web, analista de sistemas"),
-        "presencial_cities": raw.get("PRESENCIAL_CITIES", "Recife, Jaboatão dos Guararapes, Olinda"),
+        "gemini_api_key": "********",  # Shared key is hidden from regular users
+        "email_address": cfg.get("email_address", ""),
+        "email_app_password": masked_email_pass,
+        "email_cc": cfg.get("email_cc", ""),
+        "candidate_name": cfg.get("candidate_name", ""),
+        "resume_pdf": cfg.get("resume_filename", ""),
+        "max_jobs_per_category": int(cfg.get("max_jobs_per_category", 5)),
+        "search_presencial": bool(cfg.get("search_presencial", True)),
+        "search_portugal": bool(cfg.get("search_portugal", True)),
+        "request_delay_min": settings.REQUEST_DELAY_MIN,  # Global server delay config
+        "request_delay_max": settings.REQUEST_DELAY_MAX,  # Global server delay config
+        "dashboard_password": "●●●●●●●●",  # Masked password field
+        "personalize_only_emails": settings.PERSONALIZE_ONLY_EMAILS,
+        "use_base_resume_only": True,  # Default flow behavior
+        "job_categories": cats_str,
+        "presencial_cities": cities_str,
     }
 
 
-@router.post("/api/config", dependencies=[Depends(verify_token)])
-def save_config(payload: ConfigPayload):
-    raw = _parse_env_file()
+@router.post("/api/config")
+def save_config(payload: ConfigPayload, current_user: dict = Depends(get_current_user)):
+    """Save user configurations and optionally update dashboard password."""
+    user_id = current_user["id"]
     
-    # Validação obrigatória da senha do painel para salvar qualquer alteração
-    current_password = decrypt_secret(raw.get("DASHBOARD_PASSWORD", "admin123"))
-    if not payload.confirm_password or payload.confirm_password != current_password:
+    # Authenticate config modification with user's current password
+    if not payload.confirm_password or not verify_password(payload.confirm_password, current_user["password_hash"]):
         raise HTTPException(status_code=401, detail="Senha de confirmacao incorreta ou nao informada.")
 
-    # Se os campos vierem mascarados do frontend (terminando em "..."), manter os valores originais criptografados
-    gemini_key = payload.gemini_api_key
-    if gemini_key.endswith("...") and "GEMINI_API_KEY" in raw:
-        gemini_key_encrypted = raw["GEMINI_API_KEY"]
+    # Retrieve existing user config to verify masked inputs
+    old_cfg = UserConfigRepository.get_by_user_id(user_id) or {}
+    
+    # Handle SMTP password decryption verification/encryption
+    new_app_pass = payload.email_app_password
+    if new_app_pass.endswith("...") and old_cfg.get("email_app_password"):
+        email_pass_encrypted = old_cfg["email_app_password"]
     else:
-        gemini_key_encrypted = encrypt_secret(gemini_key)
+        email_pass_encrypted = encrypt_val(new_app_pass)
 
-    email_pass = payload.email_app_password
-    if email_pass.endswith("...") and "EMAIL_APP_PASSWORD" in raw:
-        email_pass_encrypted = raw["EMAIL_APP_PASSWORD"]
-    else:
-        email_pass_encrypted = encrypt_secret(email_pass)
+    # Parse comma-separated categories and cities into clean lists
+    categories_list = [c.strip() for c in payload.job_categories.split(",") if c.strip()]
+    cities_list = [c.strip() for c in payload.presencial_cities.split(",") if c.strip()]
 
-    dash_pass = payload.dashboard_password
-    if dash_pass.endswith("...") and "DASHBOARD_PASSWORD" in raw:
-        dash_pass_encrypted = raw["DASHBOARD_PASSWORD"]
-    else:
-        dash_pass_encrypted = encrypt_secret(dash_pass)
+    # Save to user_config
+    UserConfigRepository.save(user_id, {
+        "candidate_name": payload.candidate_name.strip(),
+        "resume_filename": payload.resume_pdf,
+        "email_address": payload.email_address.strip(),
+        "email_app_password": email_pass_encrypted,
+        "email_cc": payload.email_cc.strip(),
+        "job_categories": categories_list,
+        "presencial_cities": cities_list,
+        "search_presencial": payload.search_presencial,
+        "search_portugal": payload.search_portugal,
+        "max_jobs_per_category": payload.max_jobs_per_category
+    })
 
-    env_map = {
-        "GEMINI_API_KEY": gemini_key_encrypted,
-        "EMAIL_ADDRESS": payload.email_address,
-        "EMAIL_APP_PASSWORD": email_pass_encrypted,
-        "EMAIL_CC": payload.email_cc,
-        "CANDIDATE_NAME": payload.candidate_name,
-        "RESUME_PDF": payload.resume_pdf,
-        "MAX_JOBS_PER_CATEGORY": str(payload.max_jobs_per_category),
-        "SEARCH_PRESENCIAL": str(payload.search_presencial).lower(),
-        "SEARCH_PORTUGAL": str(payload.search_portugal).lower(),
-        "REQUEST_DELAY_MIN": str(payload.request_delay_min),
-        "REQUEST_DELAY_MAX": str(payload.request_delay_max),
-        "PERSONALIZE_ONLY_EMAILS": str(payload.personalize_only_emails).lower(),
-        "USE_BASE_RESUME_ONLY": str(payload.use_base_resume_only).lower(),
-        "JOB_CATEGORIES": payload.job_categories,
-        "PRESENCIAL_CITIES": payload.presencial_cities,
-        "DASHBOARD_PASSWORD": dash_pass_encrypted,
-    }
+    # Support updating user's dashboard login password
+    new_dash_pass = payload.dashboard_password.strip()
+    if new_dash_pass and not new_dash_pass.startswith("●"):
+        # Hash new password and update in users table
+        new_hash = hash_password(new_dash_pass)
+        UserRepository.update_password(user_id, new_hash)
 
-    _write_env_file(env_map)
     return {"status": "ok", "message": "Configuracoes salvas com sucesso!"}
 
 
-@router.post("/api/upload-resume", dependencies=[Depends(verify_token)])
-async def upload_resume(file: UploadFile = File(...)):
+@router.post("/api/upload-resume")
+async def upload_resume(file: UploadFile = File(...), current_user: dict = Depends(get_current_user)):
+    """Upload resume PDF and store it inside the user's isolated directory."""
+    user_id = current_user["id"]
     if not file.filename.lower().endswith(".pdf"):
         raise HTTPException(400, "Apenas arquivos PDF sao aceitos.")
 
     basename = os.path.basename(file.filename)
     safe_name = re.sub(r"[^\w.\-]", "_", basename)
-    dest = os.path.join(settings.BASE_DIR, safe_name)
+    
+    # Store the file inside user's isolated data folder
+    user_dir = get_user_data_dir(user_id)
+    dest = os.path.join(user_dir, safe_name)
 
     with open(dest, "wb") as f:
         content = await file.read()
         f.write(content)
 
-    env = _parse_env_file()
-    env["RESUME_PDF"] = safe_name
-    _write_env_file(env)
+    # Save filename to user's config
+    cfg = UserConfigRepository.get_by_user_id(user_id) or {}
+    cfg["resume_filename"] = safe_name
+    UserConfigRepository.save(user_id, cfg)
 
-    cache_file = os.path.join(settings.DATA_DIR, "base_resume_parsed.json")
+    # Clear user-specific base resume parsing cache if exists
+    cache_file = os.path.join(user_dir, "base_resume_parsed.json")
     if os.path.exists(cache_file):
         try:
             os.remove(cache_file)
@@ -196,3 +165,4 @@ async def upload_resume(file: UploadFile = File(...)):
             pass
 
     return {"status": "ok", "filename": safe_name, "message": f"Curriculo '{safe_name}' salvo com sucesso!"}
+

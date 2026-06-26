@@ -4,7 +4,6 @@ Tenta preencher formulários básicos.
 """
 import os
 import time
-from playwright.sync_api import sync_playwright
 from app.config import settings
 DATA_DIR = settings.DATA_DIR
 BROWSER_PROFILE_DIR = os.path.join(settings.DATA_DIR, "browser_profile")
@@ -15,6 +14,11 @@ def apply_via_browser(job_url: str, curriculo_path: str, job_info: dict) -> bool
     Tenta aplicar via navegador.
     Retorna True apenas se o script confirmar que aplicou com sucesso.
     """
+    if os.environ.get("SERVER_MODE", "false").lower() == "true":
+        print("  ⏭ [Navegador] Candidatura via browser desativada no servidor.")
+        return False
+
+    from playwright.sync_api import sync_playwright
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
     
     print(f"  🌐 [Navegador] Tentando acessar a vaga via portal web...")

@@ -7,6 +7,9 @@ const API = '';  // Same origin
 
 let isManualRunning = false;
 let isAutoRunning = false;
+let currentUser = null;
+let currentQueueStatus = null;
+let currentQueuePosition = 0;
 
 // ═══════════════════════════════════════════════════════════════════
 //  STATE & AUTHENTICATION
@@ -23,6 +26,31 @@ async function apiFetch(endpoint, options = {}) {
 }
 
 async function bootDashboard() {
+    try {
+        const res = await apiFetch('/api/me');
+        if (res.ok) {
+            currentUser = await res.json();
+            
+            // Show/hide admin tab
+            const navBtnAdmin = document.getElementById('nav-btn-admin');
+            if (navBtnAdmin) {
+                if (currentUser.is_admin) {
+                    navBtnAdmin.classList.remove('hidden');
+                } else {
+                    navBtnAdmin.classList.add('hidden');
+                }
+            }
+
+            // Hide autopilot card for non-admin users
+            const autopilotCard = document.getElementById('autopilot-card');
+            if (autopilotCard && !currentUser.is_admin) {
+                autopilotCard.classList.add('hidden');
+            }
+        }
+    } catch (e) {
+        console.error("Erro ao obter dados do usuário:", e);
+    }
+
     await loadDashboard();
     await checkBotStatus();
     await checkAutoStatus();
@@ -38,13 +66,13 @@ async function bootDashboard() {
 }
 
 async function handleLogin() {
-    const cpfInput = document.getElementById('login-cpf');
+    const emailInput = document.getElementById('login-email');
     const passwordInput = document.getElementById('login-password');
-    const cpf = cpfInput.value.trim();
+    const email = emailInput.value.trim();
     const password = passwordInput.value.trim();
     
-    if (!cpf || !password) {
-        showToast('CPF e senha são obrigatórios!', 'error');
+    if (!email || !password) {
+        showToast('E-mail e senha são obrigatórios!', 'error');
         return;
     }
     
@@ -52,7 +80,7 @@ async function handleLogin() {
         const res = await fetch(`/api/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ cpf, password })
+            body: JSON.stringify({ email, password })
         });
         
         const data = await res.json();
@@ -63,7 +91,7 @@ async function handleLogin() {
             await bootDashboard();
             hideLoginScreen();
         } else {
-            showToast(data.detail || 'Senha ou CPF incorretos!', 'error');
+            showToast(data.detail || 'Senha ou e-mail incorretos!', 'error');
         }
     } catch (err) {
         showToast('Erro ao conectar com o servidor.', 'error');
@@ -143,7 +171,8 @@ const pageTitles = {
     'dashboard': 'Visão Geral',
     'control': 'Controle do Bot',
     'jobs': 'Histórico de Candidaturas',
-    'settings': 'Configurações'
+    'settings': 'Configurações',
+    'admin': 'Administração de Usuários'
 };
 
 navButtons.forEach(btn => {
@@ -182,6 +211,7 @@ navButtons.forEach(btn => {
             checkAutoStatus();
         }
         if (target === 'settings') loadConfig();
+        if (target === 'admin') window.loadAdminUsers();
     });
 });
 
@@ -465,27 +495,41 @@ btnStop.addEventListener('click', async () => {
 });
 
 function updateStatusUI() {
-    const running = isManualRunning || isAutoRunning;
     const dot = document.getElementById('bot-dot');
     const text = document.getElementById('bot-status-text');
     const sidebarDot = document.getElementById('sidebar-bot-dot');
     const sidebarText = document.getElementById('sidebar-bot-text');
 
-    const activeClass = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse';
+    const runningClass = 'w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)] animate-pulse';
+    const pendingClass = 'w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.8)] animate-pulse';
     const inactiveClass = 'w-2 h-2 rounded-full bg-slate-500 shadow-[0_0_8px_rgba(100,116,139,0.5)]';
 
-    if (running) {
+    if (currentQueueStatus === 'running' || isAutoRunning) {
+        const activeClass = runningClass;
         if (dot) dot.className = activeClass;
         if (sidebarDot) sidebarDot.className = activeClass;
 
         const label = isAutoRunning ? 'Piloto Automático' : 'Em Execução';
         if (text) {
             text.textContent = label;
-            text.classList.add('text-emerald-400');
+            text.className = 'text-emerald-400';
         }
         if (sidebarText) {
             sidebarText.textContent = label;
-            sidebarText.classList.add('text-emerald-400');
+            sidebarText.className = 'text-emerald-400';
+        }
+    } else if (currentQueueStatus === 'pending') {
+        if (dot) dot.className = pendingClass;
+        if (sidebarDot) sidebarDot.className = pendingClass;
+
+        const label = `Na Fila (Posição ${currentQueuePosition})`;
+        if (text) {
+            text.textContent = label;
+            text.className = 'text-amber-400';
+        }
+        if (sidebarText) {
+            sidebarText.textContent = label;
+            sidebarText.className = 'text-amber-400';
         }
     } else {
         if (dot) dot.className = inactiveClass;
@@ -494,11 +538,11 @@ function updateStatusUI() {
         const label = 'Bot Inativo';
         if (text) {
             text.textContent = label;
-            text.classList.remove('text-emerald-400');
+            text.className = 'text-slate-400';
         }
         if (sidebarText) {
             sidebarText.textContent = label;
-            sidebarText.classList.remove('text-emerald-400');
+            sidebarText.className = 'text-slate-400';
         }
     }
 }
@@ -883,7 +927,15 @@ async function checkBotStatus() {
     try {
         const res = await apiFetch(`/api/bot-status`);
         const data = await res.json();
-        setBotRunning(!!data.running);
+        
+        currentQueueStatus = data.status || 'idle';
+        currentQueuePosition = data.queue_position || 0;
+        
+        setBotRunning(data.status === 'running' || data.status === 'pending');
+        
+        if (data.status === 'running' && !logPollInterval) {
+            startLogPolling();
+        }
     } catch (err) {}
 }
 
@@ -1135,3 +1187,145 @@ document.addEventListener('DOMContentLoaded', () => {
 
     initSession();
 });
+
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN PANEL OPERATIONS
+// ═══════════════════════════════════════════════════════════════════
+
+window.loadAdminUsers = async function() {
+    const tbody = document.getElementById('admin-users-tbody');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-muted);">Carregando usuários...</td></tr>';
+    
+    try {
+        const res = await apiFetch('/api/admin/users');
+        if (!res.ok) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:#f87171;">Não foi possível carregar a lista de usuários.</td></tr>';
+            return;
+        }
+        
+        const data = await res.json();
+        const users = data.users || [];
+        
+        if (users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text-muted);">Nenhum usuário cadastrado.</td></tr>';
+            return;
+        }
+        
+        tbody.innerHTML = users.map(user => {
+            const roleBadge = user.is_admin 
+                ? '<span class="badge badge-info" style="background:rgba(99,102,241,0.15); color:#c7d2fe;">Admin</span>' 
+                : '<span class="badge badge-success" style="background:rgba(255,255,255,0.05); color:var(--text-secondary);">Candidato</span>';
+                
+            const statusBadge = user.is_active 
+                ? '<span class="badge badge-success" style="background:rgba(16,185,129,0.15); color:#34d399;">Ativo</span>' 
+                : '<span class="badge badge-danger" style="background:rgba(239,68,68,0.15); color:#f87171;">Inativo</span>';
+                
+            const toggleText = user.is_active ? 'Desativar' : 'Ativar';
+            const toggleClass = user.is_active 
+                ? 'btn-danger-ghost' 
+                : 'btn-primary';
+                
+            const isSelf = currentUser && currentUser.id === user.id;
+            const actionBtn = isSelf 
+                ? '<span style="font-size:0.75rem; color:var(--text-muted); font-style:italic;">Você</span>' 
+                : `<button onclick="toggleUserStatus(${user.id})" class="${toggleClass}" style="padding:6px 12px; font-size:0.72rem; border-radius:8px; display:inline-flex; align-items:center; gap:4px;"><i data-lucide="${user.is_active ? 'user-x' : 'user-check'}" style="width:13px;height:13px;"></i> ${toggleText}</button>`;
+                
+            const lastLogin = user.last_login 
+                ? new Date(user.last_login + 'Z').toLocaleString('pt-BR') 
+                : 'Nunca';
+                
+            return `
+                <tr>
+                    <td><span style="font-family:monospace; color:var(--text-muted); font-weight:600;">#${user.id}</span></td>
+                    <td><div style="font-weight:600; color:var(--text-primary);">${user.name}</div></td>
+                    <td><span style="color:var(--text-secondary);">${user.email}</span></td>
+                    <td>${roleBadge}</td>
+                    <td>${statusBadge}</td>
+                    <td><span style="color:var(--text-secondary); font-size:0.78rem;">${lastLogin}</span></td>
+                    <td style="text-align:right;">${actionBtn}</td>
+                </tr>
+            `;
+        }).join('');
+        
+        lucide.createIcons();
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:#f87171;">Erro de conexão ao carregar usuários.</td></tr>';
+    }
+}
+
+window.toggleUserStatus = async function(userId) {
+    try {
+        const res = await apiFetch(`/api/admin/users/${userId}/toggle`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            await window.loadAdminUsers();
+        } else {
+            showToast(data.detail || 'Não foi possível alterar o status do usuário.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro ao conectar com o servidor.', 'error');
+    }
+}
+
+window.openCreateUserModal = function() {
+    const modal = document.getElementById('user-modal');
+    if (!modal) return;
+    
+    document.getElementById('user-modal-name').value = '';
+    document.getElementById('user-modal-email').value = '';
+    document.getElementById('user-modal-password').value = '';
+    document.getElementById('user-modal-is-admin').checked = false;
+    
+    modal.classList.remove('hidden');
+    void modal.offsetWidth; // Force reflow
+    modal.classList.remove('opacity-0');
+    modal.style.transform = 'scale(1)';
+    lucide.createIcons();
+}
+
+window.closeUserModal = function() {
+    const modal = document.getElementById('user-modal');
+    if (!modal) return;
+    
+    modal.classList.add('opacity-0');
+    setTimeout(() => {
+        modal.classList.add('hidden');
+    }, 300);
+}
+
+window.submitCreateUser = async function() {
+    const name = document.getElementById('user-modal-name').value.trim();
+    const email = document.getElementById('user-modal-email').value.trim();
+    const password = document.getElementById('user-modal-password').value.trim();
+    const is_admin = document.getElementById('user-modal-is-admin').checked;
+    
+    if (!name || !email || !password) {
+        showToast('Todos os campos obrigatórios (*) são necessários.', 'error');
+        return;
+    }
+    
+    try {
+        const res = await apiFetch('/api/admin/create-user', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, email, password, is_admin })
+        });
+        const data = await res.json();
+        
+        if (res.ok) {
+            showToast(data.message, 'success');
+            window.closeUserModal();
+            await window.loadAdminUsers();
+        } else {
+            showToast(data.detail || 'Erro ao criar usuário.', 'error');
+        }
+    } catch (err) {
+        showToast('Erro de conexão ao criar usuário.', 'error');
+    }
+}
+

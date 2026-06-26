@@ -30,7 +30,7 @@ from rich.table import Table
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, "config.env"))
 
-from app.config import settings
+from app.config import settings, UserSettings
 from app.core.browser import apply_via_browser
 from app.core.researcher import find_company_email
 from app.core.validator import run_validation
@@ -47,21 +47,27 @@ from app.core.resume import (
     generate_resume_docx, generate_resume_pdf, is_international_job
 )
 
-_RESUME_CACHE_FILE = os.path.join(BASE_DIR, "data", "resume_cache.json")
+
+def get_user_resume_cache_path(user_id: int) -> str:
+    from app.utils.paths import get_user_data_dir
+    return os.path.join(get_user_data_dir(user_id), "resume_cache.json")
 
 
-def load_resume_cache():
-    if os.path.exists(_RESUME_CACHE_FILE):
+def load_resume_cache(user_id: int = 1) -> dict:
+    cache_file = get_user_resume_cache_path(user_id)
+    if os.path.exists(cache_file):
         try:
-            with open(_RESUME_CACHE_FILE, "r", encoding="utf-8") as f:
+            with open(cache_file, "r", encoding="utf-8") as f:
                 return json.load(f)
         except:
             return {}
     return {}
 
-def save_resume_cache(cache):
+
+def save_resume_cache(cache: dict, user_id: int = 1):
+    cache_file = get_user_resume_cache_path(user_id)
     try:
-        with open(_RESUME_CACHE_FILE, "w", encoding="utf-8") as f:
+        with open(cache_file, "w", encoding="utf-8") as f:
             json.dump(cache, f, ensure_ascii=False, indent=2)
     except:
         pass
@@ -76,17 +82,22 @@ if sys.platform == "win32":
 console = Console()
 
 
-def get_resume_path() -> str:
-    pdf_name = os.getenv("RESUME_PDF", "Curriculo-PauloNeto.pdf")
-    path = os.path.join(BASE_DIR, pdf_name)
+def get_resume_path(user_settings: UserSettings | None = None) -> str:
+    if user_settings and user_settings.resume_path:
+        path = user_settings.resume_path
+    else:
+        pdf_name = os.getenv("RESUME_PDF", "Curriculo-PauloNeto.pdf")
+        path = os.path.join(BASE_DIR, pdf_name)
+        
     if not os.path.exists(path):
         console.print(f"[bold red]✗ Currículo não encontrado:[/bold red] {path}")
         sys.exit(1)
     return path
 
 
-def print_banner():
-    candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
+def print_banner(candidate_name: str | None = None):
+    if not candidate_name:
+        candidate_name = os.getenv("CANDIDATE_NAME", "Paulo Antonio do Nascimento Neto")
     now = datetime.now().strftime("%d/%m/%Y %H:%M")
     console.print()
     console.print(Panel(
@@ -97,11 +108,13 @@ def print_banner():
     ))
 
 
-def show_status():
+def show_status(user_id: int = 1):
     """Exibe histórico e estatísticas detalhadas."""
-    print_banner()
-    history = load_history()
-    stats = get_stats(history)
+    user_settings = UserSettings(user_id)
+    candidate_name = user_settings.candidate_name or settings.CANDIDATE_NAME
+    print_banner(candidate_name)
+    history = load_history(user_id)
+    stats = get_stats(history, user_id)
 
     # ── Painel de estatísticas ────────────────────────────────────
     console.print()
@@ -125,7 +138,7 @@ def show_status():
         console.print(t)
 
     # ── Histórico recente ─────────────────────────────────────────
-    recent = get_recent(history, n=15)
+    recent = get_recent(history, n=15, user_id=user_id)
     if recent:
         console.print()
         t2 = Table(title="📜 Candidaturas Recentes", box=box.ROUNDED, show_lines=True)
@@ -144,14 +157,14 @@ def show_status():
         console.print(t2)
 
     # ── CSV ───────────────────────────────────────────────────────
-    csv_path = export_csv()
+    csv_path = export_csv(user_id)
     if csv_path:
         console.print(f"\n[dim]📁 CSV exportado em: {csv_path}[/dim]")
 
 
-def load_pending_leads_from_db() -> list[dict]:
+def load_pending_leads_from_db(user_id: int) -> list[dict]:
     """Carrega leads do banco SQLite com status 'pending'."""
-    pending = LeadRepository.get_pending()
+    pending = LeadRepository.get_pending(user_id)
     jobs = []
     
     for lead in pending:
@@ -179,21 +192,23 @@ def load_pending_leads_from_db() -> list[dict]:
     return jobs
 
 
-def run_bot(test_mode: bool = False):
+def run_bot(user_id: int = 1, test_mode: bool = False):
     """Executa o fluxo principal do bot."""
+    user_settings = UserSettings(user_id)
+    
     start_time = datetime.now()
-    candidate_name = settings.CANDIDATE_NAME
+    candidate_name = user_settings.candidate_name or settings.CANDIDATE_NAME
 
-    print_banner()
+    print_banner(candidate_name)
 
     # 1. Validar config antes de rodar
     console.print("\n[dim]Verificando configurações...[/dim]")
-    if not run_validation(full=False):
+    if not run_validation(full=False, user_settings=user_settings):
         console.print("[bold red]✗ Corrija as configurações antes de continuar.[/bold red]")
         return
 
     # 2. Carregar currículo base
-    resume_path = get_resume_path()
+    resume_path = get_resume_path(user_settings)
     console.print(f"\n[bold]📄 Extraindo texto do currículo:[/bold] {os.path.basename(resume_path)}")
     resume_text = extract_resume_text(resume_path)
     if not resume_text:
@@ -202,8 +217,8 @@ def run_bot(test_mode: bool = False):
     console.print(f"  [green]✅[/green] {len(resume_text)} caracteres extraídos")
 
     # 3. Carregar histórico
-    history = load_history()
-    stats_before = get_stats(history)
+    history = load_history(user_id)
+    stats_before = get_stats(history, user_id)
     console.print(f"[dim]📊 Candidaturas anteriores: {stats_before['total_vagas_encontradas']}[/dim]")
 
     # 4. Buscar vagas
@@ -223,10 +238,10 @@ def run_bot(test_mode: bool = False):
             "email_direto": "teste@exemplo.com",
         }]
     else:
-        pending_jobs = load_pending_leads_from_db()
+        pending_jobs = load_pending_leads_from_db(user_id)
         if pending_jobs:
             console.print(f"\n[bold cyan]📋 {len(pending_jobs)} lead(s) pendente(s) no banco[/bold cyan]")
-        scraped_jobs = search_all_jobs()
+        scraped_jobs = search_all_jobs(user_settings=user_settings)
         jobs = pending_jobs + scraped_jobs
 
     if not jobs:
@@ -235,8 +250,8 @@ def run_bot(test_mode: bool = False):
 
     # 5. Processar vagas
     applied_count = skipped_count = error_count = 0
-    applied_set = build_applied_set(history)
-    resume_cache = load_resume_cache()
+    applied_set = build_applied_set(history, user_id=user_id)
+    resume_cache = load_resume_cache(user_id)
 
     console.print(f"\n[bold cyan]🚀 Processando {len(jobs)} vagas...[/bold cyan]")
 
@@ -298,7 +313,7 @@ def run_bot(test_mode: bool = False):
                 else:
                     msg = "Vaga sem e-mail detectada."
                 console.print(f"  [blue]⚡ Usando currículo base:[/blue] {msg}")
-                pdf_path = get_resume_path()
+                pdf_path = get_resume_path(user_settings)
             else:
                 # 5b. Analisar e Adaptar (Verificando Cache primeiro)
                 if vaga_slug in resume_cache:
@@ -306,15 +321,17 @@ def run_bot(test_mode: bool = False):
                     adapted = resume_cache[vaga_slug]["adapted"]
                     analysis = resume_cache[vaga_slug]["analysis"]
                 else:
-                    adapted, analysis = adapt_resume_and_analyze(resume_text, job)
+                    adapted, analysis = adapt_resume_and_analyze(
+                        resume_text, job, pdf_path=resume_path, cache_file=user_settings.base_resume_cache_file
+                    )
                     if adapted and not adapted.get("_rate_limit_fallback"):
                         resume_cache[vaga_slug] = {"adapted": adapted, "analysis": analysis}
-                        save_resume_cache(resume_cache)
+                        save_resume_cache(resume_cache, user_id)
                 
                 if adapted and adapted.get("_rate_limit_fallback"):
                     console.print("  [yellow]⚠ Rate Limit: Usando currículo estático original como fallback...[/yellow]")
                     inc_fallback()
-                    base_pdf = get_resume_path()
+                    base_pdf = get_resume_path(user_settings)
                     if os.path.exists(base_pdf):
                         pdf_path = base_pdf
                         console.print(f"  [green]✅ Currículo original encontrado.[/green]")
@@ -324,7 +341,7 @@ def run_bot(test_mode: bool = False):
                     console.print("  [yellow]⚠ Não foi possível adaptar o currículo.[/yellow]")
                     error_count += 1
                     log_application(history, job["empresa"], job["titulo"],
-                                    job.get("url", ""), False, notas="Erro na adaptação")
+                                    job.get("url", ""), False, notas="Erro na adaptação", user_id=user_id)
                     applied_set.add((emp_key, vaga_key))
                     continue
                 else:
@@ -333,8 +350,8 @@ def run_bot(test_mode: bool = False):
                     idioma = analysis.get("idioma_vaga", "pt-BR")
                     adapted["_lang"] = "en" if idioma.startswith("en") or is_international_job(job) else "pt"
                     # 5c. Gerar PDF e DOCX
-                    pdf_path = generate_resume_pdf(adapted, job, candidate_name)
-                    generate_resume_docx(adapted, job, candidate_name)
+                    pdf_path = generate_resume_pdf(adapted, job, candidate_name, output_dir=user_settings.resume_dir)
+                    generate_resume_docx(adapted, job, candidate_name, output_dir=user_settings.resume_dir)
 
             if not pdf_path:
                 console.print("  [yellow]⚠ Erro ao gerar/encontrar PDF.[/yellow]")
@@ -345,7 +362,7 @@ def run_bot(test_mode: bool = False):
                 console.print("  [bold yellow]🧪 MODO TESTE:[/bold yellow] Email NÃO enviado")
                 log_application(history, job["empresa"], job["titulo"],
                                 job.get("url", ""), False, curriculo_path=pdf_path,
-                                notas="Modo teste")
+                                notas="Modo teste", user_id=user_id)
                 applied_set.add((emp_key, vaga_key))
                 applied_count += 1
                 continue
@@ -359,20 +376,22 @@ def run_bot(test_mode: bool = False):
                         analysis=analysis,
                         adapted_data=adapted,
                         resume_path=pdf_path,
+                        user_settings=user_settings,
                     )
                     log_application(
                         history, job["empresa"], job["titulo"],
                         job.get("url", ""), success,
                         email_destino=company_email,
                         curriculo_path=pdf_path,
+                        user_id=user_id,
                     )
                     applied_set.add((emp_key, vaga_key))
                     if success:
                         applied_count += 1
-                        LeadRepository.update_status_by_email(company_email, "applied")
+                        LeadRepository.update_status_by_email(company_email, "applied", user_id)
                     else:
                         error_count += 1
-                        LeadRepository.update_status_by_email(company_email, "failed")
+                        LeadRepository.update_status_by_email(company_email, "failed", user_id)
                 else:
                     console.print(f"  📧 Email de contato coletado ({company_email}), mas envio desativado ou filtrado via configuração inteligente.")
                     log_application(
@@ -380,7 +399,8 @@ def run_bot(test_mode: bool = False):
                         job.get("url", ""), False,
                         email_destino=company_email,
                         curriculo_path=pdf_path,
-                        notas="Envio desativado ou filtrado via configuração inteligente"
+                        notas="Envio desativado ou filtrado via configuração inteligente",
+                        user_id=user_id,
                     )
                     applied_set.add((emp_key, vaga_key))
             else:
@@ -391,6 +411,7 @@ def run_bot(test_mode: bool = False):
                         history, job["empresa"], job["titulo"],
                         job.get("url", ""), False,
                         notas="LinkedIn sem email - pulado",
+                        user_id=user_id,
                     )
                     error_count += 1
                 else:
@@ -399,6 +420,7 @@ def run_bot(test_mode: bool = False):
                         history, job["empresa"], job["titulo"],
                         job.get("url", ""), False,
                         notas="Sem email - pulado",
+                        user_id=user_id,
                     )
                     error_count += 1
                     
@@ -410,11 +432,11 @@ def run_bot(test_mode: bool = False):
             console.print(f"  [red]✗ Erro inesperado: {e}[/red]")
             error_count += 1
             log_application(history, job["empresa"], job["titulo"],
-                            job.get("url", ""), False, notas=f"Erro: {str(e)[:100]}")
+                            job.get("url", ""), False, notas=f"Erro: {str(e)[:100]}", user_id=user_id)
 
     # 6. Resumo final com tabela rica
     elapsed = (datetime.now() - start_time).total_seconds()
-    final_stats = get_stats(load_history())
+    final_stats = get_stats(load_history(user_id), user_id)
 
     console.print()
     summary_table = Table(box=box.ROUNDED, show_header=False, expand=False)
@@ -436,10 +458,12 @@ def run_bot(test_mode: bool = False):
 
 
 
-def retry_failed_applications():
+def retry_failed_applications(user_id: int = 1):
     """Tenta aplicar via navegador para vagas anteriores que falharam por falta de email."""
-    print_banner()
-    history = load_history()
+    user_settings = UserSettings(user_id)
+    candidate_name = user_settings.candidate_name or settings.CANDIDATE_NAME
+    print_banner(candidate_name)
+    history = load_history(user_id)
     candidaturas = history.get("candidaturas", [])
     
     # Filtrar vagas não enviadas que tenham URL
@@ -476,7 +500,10 @@ def retry_failed_applications():
 
 
 def main():
+    default_user_id = int(os.environ.get("CURRENT_USER_ID", "1"))
     parser = argparse.ArgumentParser(description="Bot de Candidatura Automática")
+    parser.add_argument("--user-id", type=int, default=default_user_id,
+                        help="ID do usuário para executar o bot")
     parser.add_argument("--teste",   action="store_true",
                         help="Modo teste (1 vaga mock, sem enviar email)")
     parser.add_argument("--validar", action="store_true",
@@ -488,18 +515,19 @@ def main():
     args = parser.parse_args()
 
     if args.validar:
-        run_validation(full=True)
+        user_settings = UserSettings(args.user_id)
+        run_validation(full=True, user_settings=user_settings)
     elif args.retry_browser:
         try:
-            retry_failed_applications()
+            retry_failed_applications(user_id=args.user_id)
         except KeyboardInterrupt:
             console.print("\n\n[yellow]⏹ Retry interrompido pelo usuário.[/yellow]")
     elif args.status:
-        show_status()
+        show_status(user_id=args.user_id)
     elif args.teste:
-        run_bot(test_mode=True)
+        run_bot(user_id=args.user_id, test_mode=True)
     else:
-        run_bot()
+        run_bot(user_id=args.user_id)
 
 
 if __name__ == "__main__":

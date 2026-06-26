@@ -14,12 +14,15 @@ from app.config import settings
 from app.api.dependencies import verify_token
 from app.db.repositories import ApplicationRepository, LeadRepository
 
+from app.api.dependencies import get_current_user
+
 router = APIRouter()
 
 
-@router.get("/api/stats", dependencies=[Depends(verify_token)])
-def get_stats():
-    candidaturas = ApplicationRepository.get_all()
+@router.get("/api/stats")
+def get_stats(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["id"]
+    candidaturas = ApplicationRepository.get_all(user_id)
 
     total = len(candidaturas)
     enviados = sum(1 for c in candidaturas if c.get("email_enviado"))
@@ -54,7 +57,7 @@ def get_stats():
         source_counts[src] = source_counts.get(src, 0) + 1
 
     # Lead CRM sources for the new Doughnut Chart
-    leads = LeadRepository.get_all()
+    leads = LeadRepository.get_all(user_id)
     leads_sources: dict[str, int] = {}
     for l in leads:
         src = l.get("fonte", "Manual") or "Manual"
@@ -88,7 +91,8 @@ def get_stats():
         "values": [vagas_encontradas, vagas_pre_selecionadas, curriculos_gerados, emails_enviados_funnel]
     }
 
-    # Metrics
+    # Metrics (Scope to user directory if user has their own metrics, or default to global)
+    # Since metrics are global API count checks, we keep it reading from settings.METRICS_FILE
     metrics = {"rate_limit_hits": 0, "gemini_calls": 0, "fallbacks_used": 0}
     if os.path.exists(settings.METRICS_FILE):
         try:
@@ -117,9 +121,11 @@ def get_stats():
     }
 
 
-@router.get("/api/jobs", dependencies=[Depends(verify_token)])
-def get_recent_jobs():
-    """Return recent application history from DB."""
-    history = ApplicationRepository.get_all()
+@router.get("/api/jobs")
+def get_recent_jobs(current_user: dict = Depends(get_current_user)):
+    """Return recent application history from DB for the current user."""
+    user_id = current_user["id"]
+    history = ApplicationRepository.get_all(user_id)
     recent = list(reversed(history))[:50]
     return {"jobs": recent}
+

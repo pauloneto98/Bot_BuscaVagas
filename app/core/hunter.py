@@ -38,6 +38,7 @@ from app.core.researcher import _fallback_hunter_io, _fallback_apollo_io
 from app.db.repositories import LeadRepository
 
 DATA_DIR = settings.DATA_DIR
+USER_ID = int(os.environ.get("CURRENT_USER_ID", "1"))
 
 # ── Configuracao Gemini ──────────────────────────────────────────
 GEMINI_API_KEY = settings.GEMINI_API_KEY
@@ -340,7 +341,7 @@ def search_company_email(company_name: str, domain: str = None) -> Optional[str]
 
 
 def load_existing_leads() -> list:
-    return LeadRepository.get_all()
+    return LeadRepository.get_all(USER_ID)
 
 def save_leads(leads: list):
     # No-op since we insert into DB immediately, but kept for compatibility 
@@ -565,7 +566,7 @@ def hunt_specific_companies(companies: list, max_results: int = 50) -> list:
             existing_leads.append(lead)
             existing_emails.add(email)
             new_leads.append(lead)
-            LeadRepository.insert(lead)
+            LeadRepository.insert(lead, USER_ID)
             print(f"  ✅ Email encontrado: {email}")
         else:
             print(f"  ❌ Email não encontrado")
@@ -641,7 +642,7 @@ def run_hunter(max_queries: int = None):
             # Add to database
             lead['status'] = 'pending'
             lead['data'] = datetime.now().strftime('%Y-%m-%d')
-            inserted = LeadRepository.insert(lead)
+            inserted = LeadRepository.insert(lead, USER_ID)
             
             if inserted:
                 existing_leads.append(lead)

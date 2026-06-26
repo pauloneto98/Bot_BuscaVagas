@@ -1204,6 +1204,45 @@
                 </div>
             </div>
 
+            <!-- ═══════════ PAGE: ADMIN ═══════════ -->
+            <div class="page hidden fade-enter" id="page-admin" style="flex-direction:column;">
+
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:22px;">
+                    <div>
+                        <h2 style="font-size:1.25rem; font-weight:700; color:var(--text-primary);">Administração de Usuários</h2>
+                        <p style="font-size:0.8rem; color:var(--text-secondary); margin-top:3px;">Gerencie as contas dos candidatos do sistema.</p>
+                    </div>
+                </div>
+
+                <div class="glass-card" style="overflow:hidden; padding:0; flex:1;">
+                    <div style="padding:16px 20px; border-bottom:1px solid var(--glass-border); display:flex; align-items:center; gap:10px; background:rgba(255,255,255,0.02);">
+                        <i data-lucide="users" style="width:16px;height:16px;color:#818cf8;"></i>
+                        <h3 style="font-size:0.9rem; font-weight:600; color:var(--text-primary);">Lista de Usuários</h3>
+                        <button onclick="openCreateUserModal()" class="btn-primary" style="margin-left:auto; padding:6px 14px; font-size:0.75rem; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
+                            <i data-lucide="user-plus" style="width:13px;height:13px;"></i> Novo Usuário
+                        </button>
+                    </div>
+                    <div style="overflow:auto;">
+                        <table class="glass-table" style="min-width:800px;">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nome</th>
+                                    <th>E-mail</th>
+                                    <th>Nível</th>
+                                    <th>Status</th>
+                                    <th>Último Acesso</th>
+                                    <th style="text-align:right;">Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="admin-users-tbody">
+                                <!-- Rendered via JS -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
         </div><!-- end #main-content -->
     </div><!-- end #main-area -->
 </div><!-- end #app-view -->
@@ -1256,6 +1295,56 @@
             </button>
             <button onclick="saveLeadModal()" class="btn-primary" style="flex:1; justify-content:center; padding:10px; font-size:0.82rem; border-radius:9px;">
                 <i data-lucide="check" style="width:14px;height:14px;"></i> Salvar Lead
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════════ USER MODAL ═══════════════ -->
+<div id="user-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden"
+     style="opacity:0; transition:opacity 0.3s ease;">
+    <div class="glass-card w-full max-w-[500px] mx-4"
+         style="padding:24px; box-shadow:0 30px 80px rgba(0,0,0,0.7); transform:scale(0.96); transition:transform 0.3s ease; border-color:rgba(99,102,241,0.2);">
+
+        <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:14px; border-bottom:1px solid var(--glass-border); margin-bottom:18px;">
+            <h3 id="user-modal-title" style="font-size:1rem; font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:8px;">
+                <i data-lucide="user-plus" style="width:16px;height:16px;color:#818cf8;"></i> Novo Usuário
+            </h3>
+            <button onclick="closeUserModal()" style="color:var(--text-muted); background:none; border:none; cursor:pointer; padding:4px; border-radius:6px; transition:color 0.2s;"
+                    onmouseover="this.style.color='var(--text-primary)'"
+                    onmouseout="this.style.color=''">
+                <i data-lucide="x" style="width:18px;height:18px;"></i>
+            </button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:12px;">
+            <div>
+                <label style="display:block; font-size:0.7rem; font-weight:600; color:var(--text-secondary); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.04em;">Nome Completo *</label>
+                <input type="text" id="user-modal-name" class="glass-input w-full" style="padding:9px 13px; font-size:0.83rem;" placeholder="Ex: João Silva">
+            </div>
+            <div>
+                <label style="display:block; font-size:0.7rem; font-weight:600; color:var(--text-secondary); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.04em;">E-mail *</label>
+                <input type="email" id="user-modal-email" class="glass-input w-full" style="padding:9px 13px; font-size:0.83rem;" placeholder="joao@example.com">
+            </div>
+            <div>
+                <label style="display:block; font-size:0.7rem; font-weight:600; color:var(--text-secondary); margin-bottom:5px; text-transform:uppercase; letter-spacing:0.04em;">Senha *</label>
+                <input type="password" id="user-modal-password" class="glass-input w-full" style="padding:9px 13px; font-size:0.83rem;" placeholder="••••••••">
+            </div>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:4px;">
+                <label class="toggle-wrap" style="flex-shrink:0;">
+                    <input type="checkbox" id="user-modal-is-admin">
+                    <div class="toggle-slider"></div>
+                </label>
+                <div style="font-size:0.85rem; font-weight:600; color:var(--text-primary);">Tornar Administrador</div>
+            </div>
+        </div>
+
+        <div style="display:flex; gap:10px; margin-top:20px; padding-top:16px; border-top:1px solid var(--glass-border);">
+            <button onclick="closeUserModal()" class="btn-danger-ghost" style="flex:1; justify-content:center; padding:10px; font-size:0.82rem; border-radius:9px;">
+                Cancelar
+            </button>
+            <button onclick="submitCreateUser()" class="btn-primary" style="flex:1; justify-content:center; padding:10px; font-size:0.82rem; border-radius:9px;">
+                <i data-lucide="check" style="width:14px;height:14px;"></i> Criar Usuário
             </button>
         </div>
     </div>

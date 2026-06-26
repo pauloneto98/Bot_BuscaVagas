@@ -1129,22 +1129,33 @@ def _deduplicate_and_filter_jobs(jobs):
 #  ORQUESTRAÇÃO
 # ═══════════════════════════════════════════════════════════════════════
 
-def search_all_jobs(max_per_category=None):
+def search_all_jobs(max_per_category=None, user_settings=None):
     # Carregar categorias e localizações dinamicamente do config
     global JOB_CATEGORIES_PT, JOB_CATEGORIES_EN, PRESENCIAL_ALLOWED
-    if hasattr(settings, "JOB_CATEGORIES") and settings.JOB_CATEGORIES:
+    
+    if user_settings and user_settings.job_categories:
+        cats = user_settings.job_categories
+    elif hasattr(settings, "JOB_CATEGORIES") and settings.JOB_CATEGORIES:
         cats = [c.strip() for c in settings.JOB_CATEGORIES.split(",") if c.strip()]
-        if cats:
-            JOB_CATEGORIES_PT = cats
-            JOB_CATEGORIES_EN = [c for c in cats if any(x in c.lower() for x in ["developer", "analyst", "support", "engineer", "python"])]
-            if not JOB_CATEGORIES_EN:
-                JOB_CATEGORIES_EN = ["software developer", "python developer", "data analyst"]
+    else:
+        cats = []
 
-    if hasattr(settings, "PRESENCIAL_CITIES") and settings.PRESENCIAL_CITIES:
+    if cats:
+        JOB_CATEGORIES_PT = cats
+        JOB_CATEGORIES_EN = [c for c in cats if any(x in c.lower() for x in ["developer", "analyst", "support", "engineer", "python"])]
+        if not JOB_CATEGORIES_EN:
+            JOB_CATEGORIES_EN = ["software developer", "python developer", "data analyst"]
+
+    if user_settings and user_settings.presencial_cities:
+        PRESENCIAL_ALLOWED = [c.lower() for c in user_settings.presencial_cities]
+    elif hasattr(settings, "PRESENCIAL_CITIES") and settings.PRESENCIAL_CITIES:
         PRESENCIAL_ALLOWED = [c.lower() for c in settings.PRESENCIAL_CITIES]
 
     if max_per_category is None:
-        max_per_category = settings.MAX_JOBS_PER_CATEGORY
+        if user_settings:
+            max_per_category = user_settings.max_jobs_per_category
+        else:
+            max_per_category = settings.MAX_JOBS_PER_CATEGORY
 
     all_jobs = []
 
